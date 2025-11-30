@@ -27,9 +27,6 @@ CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-# =====================================================================
-#   LOAD DỮ LIỆU JSON
-# =====================================================================
 def load_json_file(path, default=None):
     if default is None:
         default = {}
@@ -51,9 +48,6 @@ PRODUCTS = PRODUCTS_DATA.get("products", [])
 COMBOS = COMBOS_DATA.get("combos", [])
 
 
-# =====================================================================
-#   HÀM TIỀN XỬ LÝ: BỎ DẤU, TÁCH TAG
-# =====================================================================
 def strip_accents(text: str) -> str:
     if not isinstance(text, str):
         return ""
@@ -96,9 +90,6 @@ def apply_multi_issue_rules(text: str):
     return best_rule
 
 
-# =====================================================================
-#   SCORING & CHỌN COMBO / SẢN PHẨM
-# =====================================================================
 def score_combo_for_tags(combo, requested_tags):
     requested_tags = set(requested_tags)
     combo_tags = set(combo.get("health_tags", []))
@@ -175,9 +166,6 @@ def search_products_by_tags(requested_tags, limit=5):
     return results[:limit]
 
 
-# =====================================================================
-#   GỌI OPENAI RESPONSES API ĐỂ VIẾT CÂU TRẢ LỜI
-# =====================================================================
 def call_openai_responses(prompt_text: str) -> str:
     """Gọi Responses API giống style dự án cũ của anh."""
     try:
@@ -277,9 +265,6 @@ YÊU CẦU TRẢ LỜI:
     return call_openai_responses(prompt)
 
 
-# =====================================================================
-#   CÁC TRẢ LỜI KHÁC (MUA HÀNG, KÊNH, KINH DOANH)
-# =====================================================================
 def handle_buy_and_payment_info():
     return (
         "Để mua hàng, anh/chị có thể chọn một trong các cách sau:\n\n"
@@ -317,9 +302,6 @@ def handle_channel_navigation():
     )
 
 
-# =====================================================================
-#   PHÂN LOẠI MODE TỰ ĐỘNG
-# =====================================================================
 def detect_mode(user_message: str) -> str:
     """Đoán xem user đang hỏi về combo / sản phẩm / mua hàng / kênh / kinh doanh."""
     text_norm = strip_accents(user_message)
@@ -355,9 +337,6 @@ def detect_mode(user_message: str) -> str:
     return "auto"
 
 
-# =====================================================================
-#   HÀM XỬ LÝ CHÍNH
-# =====================================================================
 def handle_chat(user_message: str, mode: str | None = None) -> str:
     text = (user_message or "").strip()
     if not text:
@@ -408,15 +387,40 @@ def handle_chat(user_message: str, mode: str | None = None) -> str:
     )
 
 
-# =====================================================================
-#   API CHÍNH: /openai-chat  (giống dự án mẫu của anh)
-# =====================================================================
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
     try:
-        body = request.get_json(force=True)
+        # Đọc JSON thô
+        raw_body = request.get_data(as_text=True)
+        print("=== /openai-chat RAW BODY ===")
+        print(raw_body)
+
+        body = request.get_json(silent=True) or {}
+        print("=== /openai-chat PARSED BODY (1) ===")
+        print(body)
+
+        # 1) Nếu body không có "message" nhưng có "requestBody" dạng object
+        #    → lấy message trong đó (trường hợp Tool bọc thêm 1 lớp)
+        if isinstance(body, dict) and "message" not in body:
+            rb = body.get("requestBody")
+            if isinstance(rb, dict) and "message" in rb:
+                body = rb
+                print("=== UNWRAP FROM requestBody ===")
+                print(body)
+
+        # 2) Nếu vẫn chưa có "message" mà lại có "data" dạng object chứa message
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, dict) and "message" in data:
+            body = data
+            print("=== UNWRAP FROM data ===")
+            print(body)
+
+        # Lấy message + mode
         user_message = (body.get("message") or "").strip()
         mode = (body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+
+        print(f"=== FINAL BODY === {body}")
+        print(f"=== user_message = {user_message!r}, mode = {mode!r} ===")
 
         reply_text = handle_chat(user_message, mode or None)
 
@@ -428,15 +432,7 @@ def openai_chat():
             "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
         }), 500
 
-
-@app.route("/", methods=["GET"])
-def home():
-    return "🔥 Greenway / Welllab Chatbot Gateway đang chạy ngon lành!", 200
-
-
-# =====================================================================
-#   Run Local
-# =====================================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
