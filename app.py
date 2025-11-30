@@ -366,7 +366,10 @@ def handle_chat(user_message: str, mode: str | None = None) -> str:
     if not mode:
         mode = detect_mode(text)
     mode = mode.lower().strip()
-
+    
+    # 👇 THÊM DÒNG NÀY
+    print("[DEBUG] handle_chat mode =", mode, "| text =", text)
+    
     # Các mode đơn giản
     if mode == "buy":
         return handle_buy_and_payment_info()
@@ -436,3 +439,4 @@ def home():
 # =====================================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
