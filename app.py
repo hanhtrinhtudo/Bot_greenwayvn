@@ -2,32 +2,34 @@ import os
 import json
 import unicodedata
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
+from flask_cors import CORS
 
-# ============== OpenAI ==============
+# ===== OpenAI SDK (Responses API) =====
 try:
     from openai import OpenAI
 except ImportError:
-    OpenAI = None
+    raise Exception("Chưa cài openai SDK. Chạy: pip install openai")
 
-load_dotenv()
-
+# ===== Load ENV =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if not OPENAI_API_KEY:
+    raise Exception("Thiếu biến môi trường OPENAI_API_KEY")
 
 HOTLINE = os.getenv("HOTLINE", "09xx.xxx.xxx")
 FANPAGE_URL = os.getenv("FANPAGE_URL", "https://facebook.com/ten-fanpage")
 ZALO_OA_URL = os.getenv("ZALO_OA_URL", "https://zalo.me/ten-oa")
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://greenwayglobal.vn")
 
+# ===== Init App =====
 app = Flask(__name__)
+CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 
-client = None
-if OPENAI_API_KEY and OpenAI is not None:
-    client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-# ============== Load dữ liệu ==============
-
+# =====================================================================
+#   LOAD DỮ LIỆU JSON
+# =====================================================================
 def load_json_file(path, default=None):
     if default is None:
         default = {}
@@ -35,7 +37,7 @@ def load_json_file(path, default=None):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"[WARN] Cannot read {path}: {e}")
+        print(f"[WARN] Không đọc được file {path}: {e}")
         return default
 
 
@@ -49,8 +51,9 @@ PRODUCTS = PRODUCTS_DATA.get("products", [])
 COMBOS = COMBOS_DATA.get("combos", [])
 
 
-# ============== Tiền xử lý & tag ==============
-
+# =====================================================================
+#   HÀM TIỀN XỬ LÝ: BỎ DẤU, TÁCH TAG
+# =====================================================================
 def strip_accents(text: str) -> str:
     if not isinstance(text, str):
         return ""
@@ -93,8 +96,9 @@ def apply_multi_issue_rules(text: str):
     return best_rule
 
 
-# ============== Scoring combo theo tags ==============
-
+# =====================================================================
+#   SCORING & CHỌN COMBO / SẢN PHẨM
+# =====================================================================
 def score_combo_for_tags(combo, requested_tags):
     requested_tags = set(requested_tags)
     combo_tags = set(combo.get("health_tags", []))
@@ -154,8 +158,6 @@ def select_combos_for_tags(requested_tags, user_text):
     return selected_combos, list(covered_tags)
 
 
-# ============== Tìm sản phẩm theo tags ==============
-
 def search_products_by_tags(requested_tags, limit=5):
     requested_tags = set(requested_tags)
     if not requested_tags:
@@ -173,7 +175,28 @@ def search_products_by_tags(requested_tags, limit=5):
     return results[:limit]
 
 
-# ============== Gọi OpenAI để viết câu trả lời ==============
+# =====================================================================
+#   GỌI OPENAI RESPONSES API ĐỂ VIẾT CÂU TRẢ LỜI
+# =====================================================================
+def call_openai_responses(prompt_text: str) -> str:
+    """Gọi Responses API giống style dự án cũ của anh."""
+    try:
+        res = client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt_text,
+        )
+        reply_text = getattr(res, "output_text", "") or ""
+        reply_text = reply_text.strip()
+        if not reply_text:
+            reply_text = "Hiện tại em không nhận được kết quả từ hệ thống OpenAI."
+        return reply_text
+    except Exception as e:
+        print("❌ ERROR OpenAI Responses:", e)
+        return (
+            "Xin lỗi, hiện tại hệ thống AI đang gặp lỗi, anh/chị vui lòng thử lại sau "
+            "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
+        )
+
 
 def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
     if not combos:
@@ -182,50 +205,39 @@ def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
             f"Anh/chị vui lòng liên hệ hotline {HOTLINE} để tuyến trên tư vấn chi tiết hơn ạ."
         )
 
-    if not client or not OPENAI_API_KEY:
-        return fallback_text_combos(user_question, combos, requested_tags, covered_tags)
+    combos_json = json.dumps(combos, ensure_ascii=False, indent=2)
+    tags_text = ", ".join(requested_tags)
 
-    try:
-        combos_json = json.dumps(combos, ensure_ascii=False, indent=2)
-        tags_text = ", ".join(requested_tags)
+    prompt = f"""
+Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
+Bạn chỉ được dùng đúng dữ liệu combo và sản phẩm trong JSON bên dưới, không được bịa thêm sản phẩm hay công dụng.
 
-        system_prompt = (
-            "Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng. "
-            "Bạn chỉ được dùng đúng dữ liệu combo và sản phẩm ở dạng JSON, "
-            "không được bịa thêm sản phẩm hay công dụng. "
-            "Luôn trình bày dễ hiểu, chia thành các mục rõ ràng, ưu tiên dạng gạch đầu dòng. "
-            "Luôn nhắc: 'Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.'"
-        )
+Dưới đây là câu hỏi và dữ liệu:
 
-        user_prompt = f"""
-Khách hỏi: "{user_question}"
+- Câu hỏi của khách / tư vấn viên: "{user_question}"
+- Các tags/vấn đề sức khỏe hệ thống trích xuất được: {tags_text}
 
-Các vấn đề sức khỏe/mục tiêu hệ thống trích xuất được (tags): {tags_text}
-Các combo được chọn (dữ liệu JSON):
+Dữ liệu các combo đã được hệ thống chọn (JSON):
 
 {combos_json}
 
-Yêu cầu:
-1. Tóm tắt 1–3 dòng: khách đang gặp những vấn đề/nhu cầu nào và hướng xử lý tổng quan.
-2. Với từng combo:
-   - Nêu rõ combo này đang hỗ trợ các vấn đề nào trong những vấn đề khách nêu.
-   - Liệt kê các sản phẩm trong combo (tên, lợi ích chính, giá, cách dùng tóm tắt, link).
-3. Nếu vẫn còn vấn đề nhạy cảm hoặc quá nặng, hãy khuyến nghị khách tái khám, làm xét nghiệm, và liên hệ hotline để được tư vấn kỹ hơn.
-4. Kết thúc bằng lưu ý: sản phẩm không phải là thuốc...
-"""
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.4,
-        )
-        return response.choices[0].message.content.strip()
+YÊU CẦU TRẢ LỜI (bằng tiếng Việt, dễ hiểu, rõ ràng):
 
-    except Exception as e:
-        print(f"[ERROR] OpenAI combo answer error: {e}")
-        return fallback_text_combos(user_question, combos, requested_tags, covered_tags)
+1. Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và định hướng xử lý (theo combo) cho khách.
+2. Với từng combo:
+   - Nêu rõ combo này hỗ trợ những vấn đề nào trong các vấn đề khách đang gặp.
+   - Liệt kê từng sản phẩm trong combo:
+     + Tên sản phẩm
+     + Lợi ích chính / tác dụng hỗ trợ
+     + Thời gian dùng gợi ý (nếu có trong dữ liệu)
+     + Cách dùng tóm tắt (dựa trên dose_text/usage_text nếu có)
+     + Giá (price_text)
+     + Link sản phẩm (product_url)
+3. Nếu vấn đề có vẻ nặng/nhạy cảm (ung thư, tim mạch nặng, suy thận, v.v.) hãy khuyến nghị khách nên thăm khám và tái khám định kỳ.
+4. Cuối câu trả lời, luôn nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.".
+5. Viết giọng điệu gần gũi, lịch sự, hướng dẫn như đang nói chuyện với tư vấn viên/khách hàng thật.
+"""
+    return call_openai_responses(prompt)
 
 
 def llm_answer_for_products(user_question, requested_tags, products):
@@ -235,177 +247,40 @@ def llm_answer_for_products(user_question, requested_tags, products):
             f"Anh/chị vui lòng liên hệ hotline {HOTLINE} để được tư vấn rõ hơn ạ."
         )
 
-    if not client or not OPENAI_API_KEY:
-        return fallback_text_products(user_question, requested_tags, products)
+    products_json = json.dumps(products, ensure_ascii=False, indent=2)
+    tags_text = ", ".join(requested_tags)
 
-    try:
-        products_json = json.dumps(products, ensure_ascii=False, indent=2)
-        tags_text = ", ".join(requested_tags)
+    prompt = f"""
+Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
+Bạn chỉ được dùng đúng dữ liệu sản phẩm trong JSON bên dưới, không được bịa thêm sản phẩm hay công dụng.
 
-        system_prompt = (
-            "Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng. "
-            "Bạn chỉ được dùng đúng dữ liệu sản phẩm ở dạng JSON, "
-            "không được bịa thêm sản phẩm hay công dụng. "
-            "Trình bày câu trả lời ngắn gọn, rõ ràng, dễ hiểu cho tư vấn viên."
-        )
+- Câu hỏi: "{user_question}"
+- Các tags/vấn đề sức khỏe: {tags_text}
 
-        user_prompt = f"""
-Khách hỏi: "{user_question}"
-
-Các vấn đề sức khỏe/mục tiêu hệ thống trích xuất được (tags): {tags_text}
-Các sản phẩm được chọn (dữ liệu JSON):
+Dữ liệu các sản phẩm đã được hệ thống chọn (JSON):
 
 {products_json}
 
-Yêu cầu:
-1. Mở đầu 1–2 câu: đây là các sản phẩm hỗ trợ cho vấn đề mà khách đang gặp phải.
-2. Với từng sản phẩm, trình bày:
+YÊU CẦU TRẢ LỜI:
+
+1. Mở đầu 1–2 câu: giới thiệu đây là các sản phẩm hỗ trợ phù hợp với vấn đề mà khách đang gặp.
+2. Với từng sản phẩm:
    - Tên sản phẩm
-   - Nhóm/vấn đề chính mà sản phẩm hỗ trợ
-   - Lợi ích chính (dựa trên benefits_text nếu có, hoặc mô tả)
-   - Cách dùng (usage_text/dose_text nếu có)
+   - Vấn đề chính mà sản phẩm hỗ trợ (dựa trên group/health_tags)
+   - Lợi ích chính (dựa trên benefits_text hoặc mô tả)
+   - Cách dùng tóm tắt (usage_text hoặc dose_text nếu có)
    - Giá (price_text)
    - Link sản phẩm (product_url)
-3. Nhắc: sản phẩm không phải là thuốc...
+3. Cuối cùng nhắc: sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.
+4. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
 """
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.4,
-        )
-        return response.choices[0].message.content.strip()
-
-    except Exception as e:
-        print(f"[ERROR] OpenAI products answer error: {e}")
-        return fallback_text_products(user_question, requested_tags, products)
+    return call_openai_responses(prompt)
 
 
-# ============== Fallback nếu không dùng được OpenAI ==============
-
-def fallback_text_combos(user_question, combos, requested_tags, covered_tags):
-    lines = []
-    if requested_tags:
-        lines.append(
-            "Em ghi nhận các vấn đề/mục tiêu chính của anh/chị là: "
-            + ", ".join(requested_tags)
-        )
-    lines.append("Dưới đây là một số combo phù hợp từ dữ liệu hiện có:")
-
-    for combo in combos:
-        lines.append(f"\n👉 {combo.get('name', 'Combo chưa đặt tên')}")
-        if combo.get("header_text"):
-            lines.append(f"- Mục tiêu chính: {combo['header_text']}")
-        if combo.get("duration_text"):
-            lines.append(f"- Thời gian dùng khuyến nghị: {combo['duration_text']}")
-        tags = combo.get("health_tags", [])
-        if tags:
-            lines.append(f"- Nhóm vấn đề hỗ trợ: {', '.join(tags)}")
-
-        products = combo.get("products", [])
-        if products:
-            lines.append("- Các sản phẩm trong combo:")
-            for p in products:
-                line_p = f"   • {p.get('name', 'Sản phẩm')}"
-                price_text = p.get("price_text")
-                if price_text:
-                    line_p += f" – {price_text}"
-                lines.append(line_p)
-                dose_text = p.get("dose_text")
-                if dose_text:
-                    lines.append(f"     Cách dùng: {dose_text}")
-                url = p.get("product_url")
-                if url:
-                    lines.append(f"     Link: {url}")
-
-    lines.append(
-        "\nLưu ý: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh. "
-        "Nếu anh/chị có bệnh lý nền hoặc đang dùng thuốc, nên hỏi ý kiến bác sĩ và tuyến trên."
-    )
-    return "\n".join(lines)
-
-
-def fallback_text_products(user_question, requested_tags, products):
-    lines = []
-    if requested_tags:
-        lines.append(
-            "Các vấn đề/mục tiêu chính hệ thống nhận diện được: "
-            + ", ".join(requested_tags)
-        )
-    lines.append("Một số sản phẩm hỗ trợ trong dữ liệu hiện có:")
-
-    for p in products:
-        lines.append(f"\n👉 {p.get('name', 'Sản phẩm')}")
-        group = p.get("group")
-        if group:
-            lines.append(f"- Nhóm vấn đề chính: {group}")
-        price_text = p.get("price_text")
-        if price_text:
-            lines.append(f"- Giá tham khảo: {price_text}")
-        ingredients_text = p.get("ingredients_text")
-        if ingredients_text:
-            lines.append(f"- Thành phần chính: {ingredients_text}")
-        benefits_text = p.get("benefits_text")
-        if benefits_text:
-            lines.append(f"- Lợi ích: {benefits_text}")
-        usage_text = p.get("usage_text")
-        if usage_text:
-            lines.append(f"- Cách dùng: {usage_text}")
-        url = p.get("product_url")
-        if url:
-            lines.append(f"- Link sản phẩm: {url}")
-
-    lines.append(
-        "\nLưu ý: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
-    )
-    return "\n".join(lines)
-
-
-# ============== Handlers cho các TAG trong Dialogflow CX ==============
-
-def handle_get_combo_by_condition(params):
-    user_question = (
-        params.get("user_text")
-        or params.get("condition")
-        or params.get("health_issue")
-        or ""
-    )
-
-    requested_tags = params.get("tags") or []
-    if isinstance(requested_tags, str):
-        requested_tags = [requested_tags]
-
-    extracted = extract_tags_from_text(user_question)
-    requested_tags = list(set(requested_tags) | set(extracted))
-
-    combos, covered_tags = select_combos_for_tags(requested_tags, user_question)
-    reply = llm_answer_for_combos(user_question, requested_tags, combos, covered_tags)
-    return reply
-
-
-def handle_get_products_by_condition(params):
-    user_question = (
-        params.get("user_text")
-        or params.get("condition")
-        or params.get("health_issue")
-        or ""
-    )
-
-    requested_tags = params.get("tags") or []
-    if isinstance(requested_tags, str):
-        requested_tags = [requested_tags]
-
-    extracted = extract_tags_from_text(user_question)
-    requested_tags = list(set(requested_tags) | set(extracted))
-
-    products = search_products_by_tags(requested_tags)
-    reply = llm_answer_for_products(user_question, requested_tags, products)
-    return reply
-
-
-def handle_buy_and_payment_info(params):
+# =====================================================================
+#   CÁC TRẢ LỜI KHÁC (MUA HÀNG, KÊNH, KINH DOANH)
+# =====================================================================
+def handle_buy_and_payment_info():
     return (
         "Để mua hàng, anh/chị có thể chọn một trong các cách sau:\n\n"
         "1️⃣ Đặt hàng trực tiếp trên website:\n"
@@ -420,7 +295,7 @@ def handle_buy_and_payment_info(params):
     )
 
 
-def handle_escalate_to_hotline(params):
+def handle_escalate_to_hotline():
     return (
         "Câu hỏi này thuộc nhóm chính sách/kế hoạch kinh doanh chuyên sâu nên cần tuyến trên hỗ trợ trực tiếp ạ.\n\n"
         "Anh/chị vui lòng để lại:\n"
@@ -432,7 +307,7 @@ def handle_escalate_to_hotline(params):
     )
 
 
-def handle_channel_navigation(params):
+def handle_channel_navigation():
     return (
         "Anh/chị có thể theo dõi thông tin, chương trình ưu đãi và kiến thức sức khỏe tại các kênh sau:\n\n"
         f"📘 Fanpage: {FANPAGE_URL}\n"
@@ -442,50 +317,122 @@ def handle_channel_navigation(params):
     )
 
 
-# ============== Webhook cho Dialogflow CX ==============
+# =====================================================================
+#   PHÂN LOẠI MODE TỰ ĐỘNG
+# =====================================================================
+def detect_mode(user_message: str) -> str:
+    """Đoán xem user đang hỏi về combo / sản phẩm / mua hàng / kênh / kinh doanh."""
+    text_norm = strip_accents(user_message)
 
-@app.route("/dfcx-webhook", methods=["POST"])
-def dfcx_webhook():
-    body = request.get_json(force=True, silent=True) or {}
-    print("[DEBUG] Webhook request:", json.dumps(body, ensure_ascii=False))
+    # Hỏi kinh doanh, chính sách, hoa hồng
+    business_keywords = [
+        "chinh sach", "hoa hong", "tuyen dung", "len cap",
+        "leader", "doanh so", "muc tieu thang"
+    ]
+    if any(k in text_norm for k in business_keywords):
+        return "business"
 
-    tag = body.get("fulfillmentInfo", {}).get("tag", "")
-    session_info = body.get("sessionInfo", {})
-    params = session_info.get("parameters", {}) or {}
+    # Hỏi mua hàng / thanh toán
+    buy_keywords = [
+        "mua", "dat hang", "thanh toan", "ship", "giao hang", "dat mua"
+    ]
+    if any(k in text_norm for k in buy_keywords):
+        return "buy"
 
-    reply_text = "Em chưa hiểu rõ yêu cầu, anh/chị nói rõ hơn giúp em với ạ."
+    # Hỏi kênh, fanpage, zalo
+    channel_keywords = [
+        "fanpage", "zalo", "kenh", "website", "trang web"
+    ]
+    if any(k in text_norm for k in channel_keywords):
+        return "channel"
 
-    if tag == "GET_COMBO_BY_CONDITION":
-        reply_text = handle_get_combo_by_condition(params)
-    elif tag == "GET_PRODUCTS_BY_CONDITION":
-        reply_text = handle_get_products_by_condition(params)
-    elif tag == "BUY_AND_PAYMENT_INFO":
-        reply_text = handle_buy_and_payment_info(params)
-    elif tag == "ESCALATE_TO_HOTLINE":
-        reply_text = handle_escalate_to_hotline(params)
-    elif tag == "CHANNEL_NAVIGATION_INFO":
-        reply_text = handle_channel_navigation(params)
+    # Nhắc đến combo / sản phẩm
+    if "combo" in text_norm:
+        return "combo"
+    if "san pham" in text_norm or "sản phẩm" in user_message.lower():
+        return "product"
 
-    response = {
-        "fulfillment_response": {
-            "messages": [
-                {
-                    "text": {"text": [reply_text]}
-                }
-            ]
-        },
-        "sessionInfo": {
-            "parameters": params
-        }
-    }
+    return "auto"
 
-    return jsonify(response)
+
+# =====================================================================
+#   HÀM XỬ LÝ CHÍNH
+# =====================================================================
+def handle_chat(user_message: str, mode: str | None = None) -> str:
+    text = (user_message or "").strip()
+    if not text:
+        return "Em chưa nhận được câu hỏi của anh/chị."
+
+    if not mode:
+        mode = detect_mode(text)
+    mode = mode.lower().strip()
+
+    # Các mode đơn giản
+    if mode == "buy":
+        return handle_buy_and_payment_info()
+    if mode == "channel":
+        return handle_channel_navigation()
+    if mode == "business":
+        return handle_escalate_to_hotline()
+
+    # Các mode về sức khỏe: combo / product / auto
+    requested_tags = extract_tags_from_text(text)
+
+    want_combo = "combo" in strip_accents(text) or mode == "combo"
+    want_product = "san pham" in strip_accents(text) or "sản phẩm" in text.lower() or mode == "product"
+
+    if want_combo and not want_product:
+        combos, covered_tags = select_combos_for_tags(requested_tags, text)
+        return llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+
+    if want_product and not want_combo:
+        products = search_products_by_tags(requested_tags)
+        return llm_answer_for_products(text, requested_tags, products)
+
+    # AUTO: ưu tiên combo, nếu không có thì show sản phẩm
+    combos, covered_tags = select_combos_for_tags(requested_tags, text)
+    if combos:
+        return llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+
+    products = search_products_by_tags(requested_tags)
+    if products:
+        return llm_answer_for_products(text, requested_tags, products)
+
+    # Không match gì
+    return (
+        "Hiện em chưa tìm thấy combo hay sản phẩm nào phù hợp trong dữ liệu cho trường hợp này. "
+        f"Anh/chị có thể nói rõ hơn tình trạng sức khỏe, hoặc liên hệ hotline {HOTLINE} để tuyến trên hỗ trợ kỹ hơn ạ."
+    )
+
+
+# =====================================================================
+#   API CHÍNH: /openai-chat  (giống dự án mẫu của anh)
+# =====================================================================
+@app.route("/openai-chat", methods=["POST"])
+def openai_chat():
+    try:
+        body = request.get_json(force=True)
+        user_message = (body.get("message") or "").strip()
+        mode = (body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+
+        reply_text = handle_chat(user_message, mode or None)
+
+        return jsonify({"reply": reply_text})
+
+    except Exception as e:
+        print("❌ ERROR /openai-chat:", e)
+        return jsonify({
+            "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
+        }), 500
 
 
 @app.route("/", methods=["GET"])
-def health_check():
-    return "DFCX Webhook is running", 200
+def home():
+    return "🔥 Greenway / Welllab Chatbot Gateway đang chạy ngon lành!", 200
 
 
+# =====================================================================
+#   Run Local
+# =====================================================================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    app.run(host="0.0.0.0", port=8080)
