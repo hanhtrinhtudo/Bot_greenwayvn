@@ -1,0 +1,98 @@
+{
+  "rules": [
+    {
+      "id": "mo_mau_men_gan_bung_mo",
+      "description": "Mỡ máu + men gan cao + bụng mỡ to",
+      "match_phrases": [
+        "mỡ máu",
+        "mo mau",
+        "men gan cao",
+        "bụng mỡ",
+        "bung mo",
+        "béo bụng",
+        "eo thon"
+      ],
+      "target_tags": ["giam_mo", "gan", "thai_doc", "tim_mach"],
+      "recommended_combos": [
+        "combo_thai_doc_giam_mo_ngua_ung_thu",
+        "combo_giam_mo_noi_tang",
+        "combo_cai_thien_chuc_nang_gan",
+        "combo_huyet_ap_tim_mach"
+      ],
+      "answer_strategy": "main_plus_optional_support"
+    },
+    {
+      "id": "giam_mo_giam_can_thai_doc_gan_tang_co",
+      "description": "Thải mỡ, giảm cân, thải độc gan, bữa ăn dinh dưỡng, tăng cơ",
+      "match_phrases": [
+        "thải mỡ",
+        "giam mo",
+        "giảm cân",
+        "giam can",
+        "thải độc gan",
+        "giải độc gan",
+        "bữa ăn dinh dưỡng",
+        "tăng cơ",
+        "tang co"
+      ],
+      "target_tags": ["giam_mo", "thai_doc", "gan", "tieu_hoa"],
+      "recommended_combos": [
+        "combo_thua_can_beo_phi",
+        "combo_thai_doc_giam_mo_ngua_ung_thu",
+        "combo_an_uong_kem_suy_dinh_duong"
+      ],
+      "answer_strategy": "stack_2_3_combos"
+    },
+    {
+      "id": "than_tien_liet_tuyen_tieu_khong_tu_chu",
+      "description": "Thận, tuyến tiền liệt, đi tiểu không tự chủ, đái ra quần",
+      "match_phrases": [
+        "thận",
+        "than",
+        "chức năng thận",
+        "chuc nang than",
+        "thận yếu",
+        "than yeu",
+        "tuyến tiền liệt",
+        "tuyen tien liet",
+        "phì đại tiền liệt tuyến",
+        "phi dai tien liet",
+        "đi tiểu không tự chủ",
+        "di tieu khong tu chu",
+        "tiểu són",
+        "tieu son",
+        "đái ra quần",
+        "dai ra quan",
+        "tiểu đêm",
+        "tieu dem"
+      ],
+      "target_tags": ["than", "sinh_ly_nam"],
+      "recommended_combos": [
+        "combo_than_tiet_nieu",
+        "combo_tang_cuong_sinh_ly"
+      ],
+      "answer_strategy": "combine_two_core_combos"
+    },
+    {
+      "id": "tieu_duong_mo_mau_tim_mach",
+      "description": "Tiểu đường kèm mỡ máu, tim mạch",
+      "match_phrases": [
+        "tiểu đường",
+        "tieu duong",
+        "mỡ máu",
+        "mo mau",
+        "cao huyết áp",
+        "huyet ap cao",
+        "tim mạch",
+        "tim mach"
+      ],
+      "target_tags": ["tieu_duong", "giam_mo", "tim_mach"],
+      "recommended_combos": [
+        "combo_tieu_duong",
+        "combo_huyet_ap_tim_mach",
+        "combo_thai_doc_giam_mo_ngua_ung_thu"
+      ],
+      "answer_strategy": "diabetes_plus_cardiometabolic"
+    }
+  ]
+}

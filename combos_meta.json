@@ -1,0 +1,102 @@
+{
+  "combo_thai_doc_giam_mo_ngua_ung_thu": {
+    "role": "core",
+    "description_role": "Combo Thải Độc - Giảm Mỡ - Ngừa Ung Thư"
+  },
+  "combo_thua_can_beo_phi": {
+    "role": "core",
+    "description_role": "Combo Thừa Cân - Béo Phì"
+  },
+  "combo_sang_da_dang_dep_eo_thon": {
+    "role": "support",
+    "description_role": "Combo Sáng Da - Dáng Đẹp - Eo Thon"
+  },
+  "combo_tang_cuong_sinh_ly": {
+    "role": "core",
+    "description_role": "Combo Tăng Cường Sinh Lý"
+  },
+  "combo_cai_thien_he_ho_hap": {
+    "role": "core",
+    "description_role": "Combo Cải Thiện Hệ Hô Hấp"
+  },
+  "combo_co_xuong_khop": {
+    "role": "core",
+    "description_role": "Combo Cơ - Xương - Khơp"
+  },
+  "combo_cai_thien_he_tieu_hoa": {
+    "role": "core",
+    "description_role": "Combo Cải Thiện Hệ Tiêu Hóa"
+  },
+  "combo_an_uong_kem_suy_dinh_duong": {
+    "role": "core",
+    "description_role": "Combo Ăn Uống Kém - Suy Dinh Dưỡng"
+  },
+  "combo_giam_rung_kich_thich_moc_toc": {
+    "role": "core",
+    "description_role": "Combo Giảm Rụng - Kích Thích Mọc Tóc"
+  },
+  "combo_cam_cum_so_mui": {
+    "role": "core",
+    "description_role": "Combo Cảm Cúm - Sổ Mũi"
+  },
+  "combo_ho_hap_tre_em": {
+    "role": "core",
+    "description_role": "Combo Hô Hấp - Trẻ Em"
+  },
+  "combo_tieu_hoa_tre_em": {
+    "role": "core",
+    "description_role": "Combo Tiêu Hóa - Trẻ Em"
+  },
+  "combo_than_tiet_nieu": {
+    "role": "core",
+    "description_role": "Combo Thận - Tiết Niệu"
+  },
+  "combo_cai_thien_chuc_nang_gan": {
+    "role": "core",
+    "description_role": "Combo Cải Thiện Chức Năng Gan"
+  },
+  "combo_suy_tinh_mach": {
+    "role": "core",
+    "description_role": "Combo Suy Tĩnh Mạch"
+  },
+  "combo_vay_nen_viem_da_co_dia": {
+    "role": "core",
+    "description_role": "Combo Vảy Nến-Viêm Da Cơ Địa"
+  },
+  "combo_lupus_ban_do": {
+    "role": "core",
+    "description_role": "Combo Lupus Ban Đỏ"
+  },
+  "combo_ho_tro_ung_thu": {
+    "role": "core",
+    "description_role": "Combo Hỗ Trợ Ung Thư"
+  },
+  "combo_giam_mat_ngu_tram_cam": {
+    "role": "core",
+    "description_role": "Combo Giảm Mất Ngủ - Trầm Cảm"
+  },
+  "combo_tieu_duong": {
+    "role": "core",
+    "description_role": "Combo Tiểu Đường"
+  },
+  "combo_buou_co": {
+    "role": "support",
+    "description_role": "Combo Bướu Cổ"
+  },
+  "combo_viem_nhiem_phu_khoa_nu": {
+    "role": "support",
+    "description_role": "Combo Viêm Nhiễm Phụ Khoa Nữ"
+  },
+  "combo_giam_mo_noi_tang": {
+    "role": "support",
+    "description_role": "Combo Giảm Mỡ Nội Tạng"
+  },
+  "combo_cho_mat": {
+    "role": "support",
+    "description_role": "Combo Cho Mắt"
+  },
+  "combo_huyet_ap_tim_mach": {
+    "role": "core",
+    "description_role": "Combo Huyết Áp - Tim Mạch"
+  }
+}

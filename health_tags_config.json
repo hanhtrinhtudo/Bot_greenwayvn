@@ -1,0 +1,254 @@
+{
+  "gan": {
+    "synonyms": [
+      "gan",
+      "men gan cao",
+      "gan nhiễm mỡ",
+      "gan nhiem mo",
+      "tế bào gan",
+      "bảo vệ gan",
+      "giải độc gan",
+      "thải độc gan"
+    ],
+    "type": "organ",
+    "priority": 3
+  },
+  "giam_mo": {
+    "synonyms": [
+      "giảm mỡ",
+      "giam mo",
+      "mỡ máu",
+      "mo mau",
+      "mỡ nội tạng",
+      "mỡ nội tang",
+      "bụng mỡ",
+      "bung mo",
+      "béo bụng",
+      "thừa cân",
+      "béo phì",
+      "giảm cân",
+      "eo thon"
+    ],
+    "type": "goal",
+    "priority": 3
+  },
+  "ho_hap": {
+    "synonyms": [
+      "hô hấp",
+      "ho hap",
+      "viêm phế quản",
+      "viem phe quan",
+      "ho dai dẳng",
+      "ho dai dang",
+      "hen suyễn",
+      "hen suyen",
+      "viêm đường hô hấp",
+      "viem duong ho hap",
+      "khó thở",
+      "kho tho"
+    ],
+    "type": "system",
+    "priority": 2
+  },
+  "mien_dich": {
+    "synonyms": [
+      "miễn dịch",
+      "mien dich",
+      "tăng đề kháng",
+      "tang de khang",
+      "sức đề kháng yếu",
+      "hay ốm",
+      "hay om",
+      "hay cảm cúm",
+      "hay cam cum",
+      "sức khỏe tổng thể",
+      "suc khoe tong the"
+    ],
+    "type": "system",
+    "priority": 2
+  },
+  "sinh_ly_nam": {
+    "synonyms": [
+      "sinh lý nam",
+      "sinh ly nam",
+      "yếu sinh lý",
+      "yeu sinh ly",
+      "tuyến tiền liệt",
+      "tuyen tien liet",
+      "phì đại tiền liệt tuyến",
+      "phi dai tien liet",
+      "xuất tinh sớm",
+      "xuat tinh som",
+      "rối loạn cương",
+      "roi loan cuong",
+      "tiền liệt tuyến"
+    ],
+    "type": "organ",
+    "priority": 3
+  },
+  "thai_doc": {
+    "synonyms": [
+      "thải độc",
+      "thai doc",
+      "giải độc",
+      "giai doc",
+      "detox",
+      "thải độc cơ thể",
+      "thải độc gan",
+      "thải độc thận",
+      "thải độc máu"
+    ],
+    "type": "process",
+    "priority": 2
+  },
+  "than": {
+    "synonyms": [
+      "thận",
+      "than",
+      "chức năng thận",
+      "chuc nang than",
+      "thận yếu",
+      "than yeu",
+      "suy thận",
+      "suy than",
+      "đi tiểu nhiều",
+      "di tieu nhieu",
+      "tiểu đêm",
+      "tieu dem",
+      "viêm tiết niệu",
+      "viem tiet nieu",
+      "đi tiểu không tự chủ",
+      "di tieu khong tu chu",
+      "tiểu són",
+      "tieu son",
+      "đái ra quần",
+      "dai ra quan"
+    ],
+    "type": "organ",
+    "priority": 3
+  },
+  "than_kinh": {
+    "synonyms": [
+      "thần kinh",
+      "than kinh",
+      "stress",
+      "căng thẳng",
+      "cang thang",
+      "mất ngủ",
+      "mat ngu",
+      "trầm cảm",
+      "tram cam",
+      "lo âu",
+      "lo au"
+    ],
+    "type": "system",
+    "priority": 2
+  },
+  "tieu_duong": {
+    "synonyms": [
+      "tiểu đường",
+      "tieu duong",
+      "đường huyết cao",
+      "duong huyet cao",
+      "rối loạn đường huyết",
+      "roi loan duong huyet"
+    ],
+    "type": "disease",
+    "priority": 3
+  },
+  "tieu_hoa": {
+    "synonyms": [
+      "tiêu hóa",
+      "tieu hoa",
+      "đau dạ dày",
+      "dau da day",
+      "trào ngược",
+      "trao nguoc",
+      "viêm loét dạ dày",
+      "viem loet da day",
+      "đầy hơi",
+      "day hoi",
+      "khó tiêu",
+      "kho tieu",
+      "ăn uống kém",
+      "an uong kem",
+      "suy dinh dưỡng",
+      "suy dinh duong",
+      "ruột kích thích",
+      "ruot kich thich"
+    ],
+    "type": "system",
+    "priority": 2
+  },
+  "tim_mach": {
+    "synonyms": [
+      "tim mạch",
+      "tim mach",
+      "cao huyết áp",
+      "huyet ap cao",
+      "huyết áp cao",
+      "mỡ máu",
+      "mo mau",
+      "cholesterol cao",
+      "xơ vữa mạch",
+      "xo vua mach"
+    ],
+    "type": "organ",
+    "priority": 3
+  },
+  "ung_thu": {
+    "synonyms": [
+      "ung thư",
+      "ung thu",
+      "u ác tính",
+      "u ac tinh",
+      "hỗ trợ ung thư",
+      "ho tro ung thu",
+      "hóa trị",
+      "hoa tri",
+      "xạ trị",
+      "xa tri"
+    ],
+    "type": "disease",
+    "priority": 1
+  },
+  "xuong_khop": {
+    "synonyms": [
+      "xương khớp",
+      "xuong khop",
+      "thoái hóa khớp",
+      "thoai hoa khop",
+      "đau khớp",
+      "dau khop",
+      "gai cột sống",
+      "gai cot song",
+      "viêm khớp",
+      "viem khop"
+    ],
+    "type": "system",
+    "priority": 2
+  },
+  "lam_dep": {
+    "synonyms": [
+      "làm đẹp",
+      "lam dep",
+      "trắng da",
+      "trang da",
+      "sáng da",
+      "sang da",
+      "nám",
+      "nam",
+      "tàn nhang",
+      "tan nhang",
+      "chống lão hóa",
+      "chong lao hoa"
+    ],
+    "type": "goal",
+    "priority": 1
+  },
+  "khac": {
+    "synonyms": [],
+    "type": "misc",
+    "priority": 0
+  }
+}
