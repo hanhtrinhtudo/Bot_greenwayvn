@@ -390,39 +390,36 @@ def handle_chat(user_message: str, mode: str | None = None) -> str:
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
     try:
-        # Đọc JSON thô
+        # Log body để biết DF CX gửi gì
         raw_body = request.get_data(as_text=True)
         print("=== /openai-chat RAW BODY ===")
         print(raw_body)
 
-        body = request.get_json(silent=True) or {}
-        print("=== /openai-chat PARSED BODY (1) ===")
-        print(body)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            body = {}
+        print("=== PARSED BODY (1) ===", body)
 
-        # 1) Nếu body không có "message" nhưng có "requestBody" dạng object
-        #    → lấy message trong đó (trường hợp Tool bọc thêm 1 lớp)
-        if isinstance(body, dict) and "message" not in body:
-            rb = body.get("requestBody")
-            if isinstance(rb, dict) and "message" in rb:
-                body = rb
-                print("=== UNWRAP FROM requestBody ===")
-                print(body)
+        # Nếu DF CX bọc thêm 1 lớp kiểu { "requestBody": { "message": ... } }
+        if "message" not in body:
+            for key in ["requestBody", "body", "data"]:
+                inner = body.get(key)
+                if isinstance(inner, dict) and "message" in inner:
+                    body = inner
+                    print(f"=== UNWRAP FROM {key} ===", body)
+                    break
 
-        # 2) Nếu vẫn chưa có "message" mà lại có "data" dạng object chứa message
-        data = body.get("data") if isinstance(body, dict) else None
-        if isinstance(data, dict) and "message" in data:
-            body = data
-            print("=== UNWRAP FROM data ===")
-            print(body)
+        # Lấy message + mode (nếu có)
+        user_message = str(body.get("message", "")).strip()
+        mode = str(body.get("mode", "")).strip().lower()
 
-        # Lấy message + mode
-        user_message = (body.get("message") or "").strip()
-        mode = (body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+        # Nếu mode rỗng / auto / default thì để gateway tự detect
+        if mode in ["", "auto", "default", "none", "null"]:
+            mode = None
 
-        print(f"=== FINAL BODY === {body}")
-        print(f"=== user_message = {user_message!r}, mode = {mode!r} ===")
+        print(f"=== FINAL MESSAGE = {user_message!r}, mode = {mode!r} ===")
 
-        reply_text = handle_chat(user_message, mode or None)
+        reply_text = handle_chat(user_message, mode)
 
         return jsonify({"reply": reply_text})
 
@@ -432,7 +429,9 @@ def openai_chat():
             "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
         }), 500
 
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
 
