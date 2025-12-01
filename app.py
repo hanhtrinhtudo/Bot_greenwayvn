@@ -3,6 +3,8 @@ import json
 import time
 import unicodedata
 from datetime import datetime
+import psycopg2
+from psycopg2.extras import DictCursor
 
 import requests
 from flask import Flask, request, jsonify
@@ -16,6 +18,8 @@ except ImportError:
 
 # ===== Load ENV =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+DATABASE_URL   = os.getenv("DATABASE_URL", "")
+
 if not OPENAI_API_KEY:
     raise Exception("Thiếu biến môi trường OPENAI_API_KEY")
 
@@ -32,7 +36,99 @@ CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# ====== DB HELPER ======
+def get_db_conn():
+    # Render khuyến nghị dùng 1 connection / process
+    # nên có thể cache connection ở global nếu muốn tối ưu hơn
+    return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
 
+def get_recent_history(session_id: str, limit: int = 8):
+    """Lấy lịch sử gần nhất của 1 phiên chat (user + assistant)."""
+    if not session_id:
+        return []
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT role, content
+                FROM chat_logs
+                WHERE session_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (session_id, limit),
+            )
+            rows = cur.fetchall()
+        # đảo ngược lại theo thứ tự cũ
+        rows = list(reversed(rows))
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+    finally:
+        conn.close()
+
+def save_message(session_id: str, role: str, content: str):
+    """Lưu 1 message vào DB."""
+    if not session_id or not content:
+        return
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO chat_logs (session_id, role, content)
+                VALUES (%s, %s, %s)
+                """,
+                (session_id, role, content),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+# >>> MỚI: hàm nhận diện câu “trả lời lại câu hỏi trên”
+def strip_accents(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text
+
+def is_retry_phrase(text: str) -> bool:
+    """
+    Nhận diện các câu kiểu:
+    - 'trả lời lại câu hỏi trên'
+    - 'trả lời lại câu vừa rồi'
+    - 'trả lời lại câu hỏi trước'
+    """
+    t = strip_accents((text or "").strip())
+    if not t:
+        return False
+
+    patterns = [
+        "tra loi lai cau hoi tren",
+        "tra loi lai cau hoi vua roi",
+        "tra loi lai cau vua roi",
+        "tra loi lai cau truoc",
+        "tra loi lai cau hoi truoc",
+        "tra loi lai cau hoi nay",
+        "tra loi lai cau hoi luc nay",
+    ]
+    return any(p in t for p in patterns)
+
+def get_last_user_question_for_retry(session_id: str) -> str | None:
+    """
+    Lấy câu hỏi user gần nhất (role='user') nhưng KHÔNG phải các câu 'trả lời lại...'
+    dùng cho tình huống retry.
+    """
+    history = get_recent_history(session_id, limit=20)
+    # Duyệt từ cuối lên đầu để lấy câu gần nhất
+    for msg in reversed(history):
+        if msg.get("role") == "user" and not is_retry_phrase(msg.get("content", "")):
+            return msg.get("content")
+    return None
+    
 # =====================================================================
 #   LOAD DỮ LIỆU JSON
 # =====================================================================
@@ -451,6 +547,7 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
 
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
+    data = request.get_json(silent=True) or {}
     start_time = time.time()
     try:
         body = request.get_json(force=True)
@@ -459,10 +556,35 @@ def openai_chat():
         session_id = body.get("session_id") or ""
         channel = body.get("channel") or "web"
         user_id = body.get("user_id") or ""
+        
+        # >>> MỚI: lưu câu hỏi của user vào DB NGAY LẬP TỨC
+        try:
+            if session_id and user_message:
+                save_message(session_id, "user", user_message)
+        except Exception as db_err:
+            print("[WARN] DB log user error:", db_err)
 
+        # >>> MỚI: xử lý case 'trả lời lại câu hỏi trên'
+        effective_message = user_message
+        retry_used = False
+        if session_id and is_retry_phrase(user_message):
+            last_q = get_last_user_question_for_retry(session_id)
+            if last_q:
+                print("[DEBUG] Retry phrase detected, dùng lại câu hỏi:", last_q)
+                effective_message = last_q
+                retry_used = True
+
+        # Gọi handler với effective_message
         reply_text, meta = handle_chat(user_message, mode or None, return_meta=True)
 
         latency_ms = int((time.time() - start_time) * 1000)
+
+        # >>> MỚI: lưu trả lời của Bot vào DB
+        try:
+            if session_id and reply_text:
+                save_message(session_id, "assistant", reply_text)
+        except Exception as db_err:
+            print("[WARN] DB log assistant error:", db_err)
 
         log_payload = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -470,6 +592,8 @@ def openai_chat():
             "session_id": session_id,
             "user_id": user_id,
             "user_message": user_message,
+            "effective_message": effective_message,  # 👈 xem Bot đã dùng câu nào để xử lý
+            "retry_used": retry_used,
             "bot_reply": reply_text,
             "mode_detected": meta.get("mode_detected"),
             "health_tags": meta.get("health_tags", []),
@@ -494,7 +618,3 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
-
-
-
