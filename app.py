@@ -351,6 +351,92 @@ def call_openai_responses(prompt_text: str) -> str:
             "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
         )
 
+
+def safe_parse_json(text: str, default=None):
+    """Cố gắng bóc JSON từ câu trả lời của model."""
+    if default is None:
+        default = {}
+    if not text:
+        return default
+    try:
+        return json.loads(text)
+    except Exception:
+        # Thử bóc từ { ... }
+        try:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(text[start:end+1])
+        except Exception:
+            return default
+    return default
+
+
+def ai_classify_intent(
+    user_message: str, history_messages: list[dict] | None = None
+) -> dict:
+    """
+    Phân loại ý định của người dùng:
+    - greeting: chào hỏi
+    - smalltalk: nói chuyện linh tinh, hỏi thăm, câu đời thường
+    - health_question: hỏi về vấn đề sức khỏe chung (chưa rõ combo/sản phẩm)
+    - product_question: hỏi về 1 sản phẩm cụ thể
+    - combo_question: hỏi gợi ý combo
+    - business_policy: chính sách / hoa hồng / tuyển dụng
+    - buy_payment: cách mua hàng, thanh toán, giao hàng
+    - channel_info: hỏi link fanpage, zalo, website
+    - other: không rõ / chủ đề khác
+    """
+    history_messages = history_messages or []
+    # Ghép lịch sử thành text
+    history_text_lines = []
+    for m in history_messages[-6:]:  # lấy tối đa 6 câu gần nhất
+        role = m.get("role", "user")
+        content = (m.get("content") or "").replace("\n", " ").strip()
+        if not content:
+            continue
+        prefix = "KHÁCH" if role == "user" else "BOT"
+        history_text_lines.append(f"{prefix}: {content}")
+    history_text = "\n".join(history_text_lines)
+
+    prompt = f"""
+Bạn là module PHÂN LOẠI Ý ĐỊNH cho chatbot tư vấn sức khỏe & sản phẩm Greenway / Welllab.
+
+Nhiệm vụ:
+- Chỉ phân loại ý định, KHÔNG tự tư vấn sức khỏe.
+- Dựa vào lịch sử hội thoại (nếu có) và câu mới nhất của người dùng.
+
+Các loại intent hợp lệ:
+- "greeting"       : chào hỏi, hỏi thăm kiểu "chào em", "hello", "dạo này sao rồi"...
+- "smalltalk"      : nói chuyện đời thường, hỏi linh tinh, đùa vui, không yêu cầu tư vấn sản phẩm/chính sách.
+- "health_question": hỏi về triệu chứng, tình trạng sức khỏe chung (có hoặc không nhắc combo/sản phẩm).
+- "product_question": hỏi về MỘT sản phẩm cụ thể, tên, cách dùng, tác dụng, giá, link...
+- "combo_question" : hỏi gợi ý combo / bộ sản phẩm cho vấn đề sức khỏe.
+- "business_policy": hỏi về chính sách, hoa hồng, tuyển dụng, thăng cấp, KPI, doanh số...
+- "buy_payment"    : hỏi về cách mua hàng, giao hàng, thanh toán.
+- "channel_info"   : hỏi xin link fanpage, Zalo OA, website, kênh liên hệ.
+- "other"          : mọi trường hợp khác không nằm trong các nhóm trên.
+
+Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
+
+{{
+  "intent": "greeting | smalltalk | health_question | product_question | combo_question | business_policy | buy_payment | channel_info | other",
+  "reason": "giải thích rất ngắn, tiếng Việt"
+}}
+
+----- LỊCH SỬ HỘI THOẠI (nếu có) -----
+{history_text}
+
+----- CÂU MỚI NHẤT CỦA NGƯỜI DÙNG -----
+"{user_message}"
+"""
+
+    raw = call_openai_responses(prompt)
+    data = safe_parse_json(raw, default={"intent": "other", "reason": ""})
+    intent = data.get("intent") or "other"
+    data["intent"] = intent
+    return data
+
 # =====================================================================
 #   LLM PROMPTS
 # =====================================================================
@@ -582,6 +668,7 @@ def log_conversation(payload: dict):
 def handle_chat(
     user_message: str,
     mode: str | None = None,
+    session_id: str | None = None,
     return_meta: bool = False,
     history: list | None = None,
 ):
@@ -592,6 +679,7 @@ def handle_chat(
         reply = "Em chưa nhận được câu hỏi của anh/chị."
         if return_meta:
             meta = {
+                "intent": "",
                 "mode_detected": "",
                 "health_tags": [],
                 "selected_combos": [],
@@ -600,11 +688,116 @@ def handle_chat(
             return reply, meta
         return reply
 
+    # Dùng history được truyền từ /openai-chat cho AI phân loại intent
+    history_messages = history
+
+    # Gọi AI phân loại ý định
+    intent_info = ai_classify_intent(text, history_messages)
+    intent = intent_info.get("intent", "other")
+    print("[INTENT]", intent, "|", intent_info.get("reason", ""))
+
+    # ================== ROUTING THEO INTENT TỰ NHIÊN ==================
+    # 1. Chào hỏi
+    if intent == "greeting":
+        reply = (
+            "Dạ em chào anh/chị ạ 😊\n"
+            "Anh/chị cứ chia sẻ giúp em vấn đề sức khỏe hoặc nhu cầu về sản phẩm, "
+            "em sẽ gợi ý combo/sản phẩm phù hợp ạ."
+        )
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "greeting",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
+
+    # 2. Nói chuyện đời thường / hỏi vu vơ
+    if intent == "smalltalk":
+        smalltalk_reply = call_openai_responses(
+            f"""
+    Bạn là trợ lý sức khỏe Greenway/Welllab.
+    Người dùng đang CHỈ NÓI CHUYỆN ĐỜI THƯỜNG, không yêu cầu tư vấn cụ thể.
+
+    Hãy trả lời thân thiện, ngắn gọn (2-4 câu), có thể đùa nhẹ, 
+    sau đó khéo léo gợi ý rằng nếu họ cần tư vấn về sức khỏe / sản phẩm / combo thì bạn luôn sẵn sàng.
+
+    Câu của người dùng: "{text}"
+    """
+        )
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "smalltalk",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return smalltalk_reply, meta
+        return smalltalk_reply
+
+    # 3. Chính sách / kinh doanh
+    if intent == "business_policy":
+        reply = handle_escalate_to_hotline()
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "business",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
+
+    # 4. Cách mua hàng / thanh toán
+    if intent == "buy_payment":
+        reply = handle_buy_and_payment_info()
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "buy",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
+
+    # 5. Hỏi kênh liên hệ
+    if intent == "channel_info":
+        reply = handle_channel_navigation()
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "channel",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
+
+    # 6. Tuning mode cho các câu sức khỏe
+    #    (giữ nguyên pipeline cũ, nhưng ưu tiên intent AI)
+    if intent == "combo_question":
+        mode = "combo"
+    elif intent == "product_question":
+        mode = "product"
+    elif intent == "health_question":
+        # để auto cho pipeline combo/product tự chọn
+        if not mode:
+            mode = "auto"
+
     # Nếu là câu follow-up, dùng luôn lịch sử để trả lời
     if history and looks_like_followup(text):
         reply = llm_answer_with_history(text, history)
         if return_meta:
             meta = {
+                "intent": intent,
                 "mode_detected": "followup",
                 "health_tags": [],
                 "selected_combos": [],
@@ -618,6 +811,7 @@ def handle_chat(
 
     requested_tags = extract_tags_from_text(text)
     meta = {
+        "intent": intent,
         "mode_detected": mode,
         "health_tags": requested_tags,
         "selected_combos": [],
@@ -745,9 +939,13 @@ def openai_chat():
         except Exception as e:
             print("[DB ERROR] Cannot get history:", e)
 
-        # 4) Xử lý chat
+        # 4) Xử lý chat – dùng message_for_ai (đã xử lý 'trả lời lại câu hỏi trên')
         reply_text, meta = handle_chat(
-            message_for_ai, mode or None, return_meta=True, history=history
+            message_for_ai,
+            mode or None,
+            session_id=session_id,
+            return_meta=True,
+            history=history,
         )
 
         # 5) Lưu bot reply vào DB
@@ -768,6 +966,7 @@ def openai_chat():
             "message_for_ai": message_for_ai,
             "used_history_message": used_history_message,
             "bot_reply": reply_text,
+            "intent": meta.get("intent", ""),
             "mode_detected": meta.get("mode_detected"),
             "health_tags": meta.get("health_tags", []),
             "selected_combos": meta.get("selected_combos", []),
@@ -808,4 +1007,3 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
