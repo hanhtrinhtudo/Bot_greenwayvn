@@ -3,6 +3,7 @@ import json
 import time
 import unicodedata
 from datetime import datetime
+
 import psycopg2
 from psycopg2.extras import DictCursor
 
@@ -18,7 +19,7 @@ except ImportError:
 
 # ===== Load ENV =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-DATABASE_URL   = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 if not OPENAI_API_KEY:
     raise Exception("Thiếu biến môi trường OPENAI_API_KEY")
@@ -28,7 +29,7 @@ FANPAGE_URL = os.getenv("FANPAGE_URL", "https://facebook.com/ten-fanpage")
 ZALO_OA_URL = os.getenv("ZALO_OA_URL", "https://zalo.me/ten-oa")
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://greenwayglobal.vn")
 
-LOG_WEBHOOK_URL = os.getenv("LOG_WEBHOOK_URL", "")  # 👈 Webhook Apps Script
+LOG_WEBHOOK_URL = os.getenv("LOG_WEBHOOK_URL", "")  # Webhook Apps Script
 
 # ===== Init App =====
 app = Flask(__name__)
@@ -36,14 +37,23 @@ CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ====== DB HELPER ======
+# =====================================================================
+#   DB HELPER – KẾT NỐI & LỊCH SỬ HỘI THOẠI
+# =====================================================================
 def get_db_conn():
-    # Render khuyến nghị dùng 1 connection / process
-    # nên có thể cache connection ở global nếu muốn tối ưu hơn
+    """
+    Mở connection tới PostgreSQL (Render cung cấp DATABASE_URL).
+    """
+    if not DATABASE_URL:
+        raise Exception("Thiếu biến môi trường DATABASE_URL")
     return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
 
+
 def get_recent_history(session_id: str, limit: int = 8):
-    """Lấy lịch sử gần nhất của 1 phiên chat (user + assistant)."""
+    """
+    Lấy lịch sử gần nhất của 1 phiên chat (user + assistant).
+    Kết quả: list [{role, content}], đã sort từ cũ -> mới.
+    """
     if not session_id:
         return []
 
@@ -61,14 +71,16 @@ def get_recent_history(session_id: str, limit: int = 8):
                 (session_id, limit),
             )
             rows = cur.fetchall()
-        # đảo ngược lại theo thứ tự cũ
-        rows = list(reversed(rows))
+        rows = list(reversed(rows))  # đảo lại theo thứ tự cũ
         return [{"role": r["role"], "content": r["content"]} for r in rows]
     finally:
         conn.close()
 
+
 def save_message(session_id: str, role: str, content: str):
-    """Lưu 1 message vào DB."""
+    """
+    Lưu 1 message vào DB (nếu có session_id & content).
+    """
     if not session_id or not content:
         return
 
@@ -86,7 +98,36 @@ def save_message(session_id: str, role: str, content: str):
     finally:
         conn.close()
 
-# >>> MỚI: hàm nhận diện câu “trả lời lại câu hỏi trên”
+
+def get_last_user_message(session_id: str):
+    """
+    Lấy câu hỏi gần nhất của USER trong 1 session.
+    Dùng cho các câu kiểu: 'trả lời lại câu hỏi trên'.
+    """
+    if not session_id:
+        return None
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT content
+                FROM chat_logs
+                WHERE session_id = %s AND role = 'user'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            )
+            row = cur.fetchone()
+            return row["content"] if row else None
+    finally:
+        conn.close()
+
+# =====================================================================
+#   TIỆN ÍCH XỬ LÝ TEXT
+# =====================================================================
 def strip_accents(text: str) -> str:
     if not isinstance(text, str):
         return ""
@@ -95,40 +136,65 @@ def strip_accents(text: str) -> str:
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return text
 
-def is_retry_phrase(text: str) -> bool:
+
+def looks_like_repeat_request(text: str) -> bool:
     """
-    Nhận diện các câu kiểu:
-    - 'trả lời lại câu hỏi trên'
-    - 'trả lời lại câu vừa rồi'
-    - 'trả lời lại câu hỏi trước'
+    Nhận diện câu kiểu: 'trả lời lại câu hỏi trên / vừa nãy'.
     """
-    t = strip_accents((text or "").strip())
-    if not t:
+    if not text:
         return False
+    t = strip_accents(text)
+    t = " ".join(t.split())
 
     patterns = [
-        "tra loi lai cau hoi tren",
-        "tra loi lai cau hoi vua roi",
-        "tra loi lai cau vua roi",
+        "tra loi lai cau hoi",
+        "tra loi lai cau tren",
+        "tra loi lai cau vua nay",
         "tra loi lai cau truoc",
-        "tra loi lai cau hoi truoc",
-        "tra loi lai cau hoi nay",
-        "tra loi lai cau hoi luc nay",
+        "hoi lai cau hoi truoc",
+        "hoi lai cau truoc",
     ]
     return any(p in t for p in patterns)
 
-def get_last_user_question_for_retry(session_id: str) -> str | None:
+
+def looks_like_followup(text: str) -> bool:
     """
-    Lấy câu hỏi user gần nhất (role='user') nhưng KHÔNG phải các câu 'trả lời lại...'
-    dùng cho tình huống retry.
+    Nhận diện câu follow-up dựa trên câu trả lời trước:
+    'combo trên uống bao lâu', 'sản phẩm đó giá bao nhiêu', ...
     """
-    history = get_recent_history(session_id, limit=20)
-    # Duyệt từ cuối lên đầu để lấy câu gần nhất
-    for msg in reversed(history):
-        if msg.get("role") == "user" and not is_retry_phrase(msg.get("content", "")):
-            return msg.get("content")
-    return None
-    
+    if not text:
+        return False
+    t = strip_accents(text)
+    t = " ".join(t.split())
+
+    # Nhắc 'combo / sản phẩm / gói' + 'trên / đó / vừa nãy / trước'
+    core_phrases = [
+        "combo tren",
+        "combo truoc",
+        "combo vua nay",
+        "combo do",
+        "san pham tren",
+        "san pham truoc",
+        "san pham vua nay",
+        "san pham do",
+        "goi tren",
+        "goi truoc",
+        "goi vua nay",
+        "goi do",
+    ]
+    if any(p in t for p in core_phrases):
+        return True
+
+    # Câu hỏi về thời gian uống / liều / giá mà thường là follow-up
+    if "bao lau" in t and ("uong" in t or "dung" in t):
+        return True
+    if "gia bao nhieu" in t or "gia the nao" in t:
+        return True
+    if "moi lan uong" in t or "ngay uong" in t or "cach uong" in t or "cach dung" in t:
+        return True
+
+    return False
+
 # =====================================================================
 #   LOAD DỮ LIỆU JSON
 # =====================================================================
@@ -152,15 +218,9 @@ MULTI_ISSUE_RULES = load_json_file("multi_issue_rules.json", {"rules": []})
 PRODUCTS = PRODUCTS_DATA.get("products", [])
 COMBOS = COMBOS_DATA.get("combos", [])
 
-def strip_accents(text: str) -> str:
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()
-    text = unicodedata.normalize("NFD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return text
-
-
+# =====================================================================
+#   TAG & SELECTION
+# =====================================================================
 def extract_tags_from_text(text: str):
     """Dựa trên HEALTH_TAGS_CONFIG, map câu hỏi sang health_tags."""
     text_norm = strip_accents(text)
@@ -269,7 +329,9 @@ def search_products_by_tags(requested_tags, limit=5):
 
     return results[:limit]
 
-
+# =====================================================================
+#   OPENAI RESPONSES
+# =====================================================================
 def call_openai_responses(prompt_text: str) -> str:
     """Gọi Responses API giống style dự án cũ của anh."""
     try:
@@ -289,7 +351,9 @@ def call_openai_responses(prompt_text: str) -> str:
             "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
         )
 
-
+# =====================================================================
+#   LLM PROMPTS
+# =====================================================================
 def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
     if not combos:
         return (
@@ -369,6 +433,51 @@ YÊU CẦU TRẢ LỜI:
     return call_openai_responses(prompt)
 
 
+def llm_answer_with_history(latest_question: str, history: list) -> str:
+    """
+    Dùng khi câu hỏi là follow-up: tận dụng transcript hội thoại gần đây.
+    """
+    if not history:
+        # fallback cho chắc
+        return call_openai_responses(
+            f"Khách hỏi: {latest_question}\nHãy tư vấn như trợ lý Greenway/Welllab."
+        )
+
+    lines = []
+    # Lấy khoảng 10 message gần nhất để tránh prompt quá dài
+    for msg in history[-10:]:
+        role = msg.get("role")
+        prefix = "Khách" if role == "user" else "Trợ lý"
+        content = msg.get("content", "")
+        lines.append(f"{prefix}: {content}")
+    convo = "\n".join(lines)
+
+    prompt = f"""
+Bạn là trợ lý tư vấn sức khỏe & sản phẩm cho Greenway/Welllab.
+
+Dưới đây là đoạn hội thoại gần đây giữa khách và trợ lý (bạn):
+
+{convo}
+
+Câu hỏi mới nhất của khách là: "{latest_question}"
+
+NHIỆM VỤ:
+
+1. Hiểu 'combo trên', 'combo đó', 'sản phẩm trên', 'sản phẩm đó', 'gói trên'...
+   là đang nói về combo/sản phẩm mà bạn vừa tư vấn trước đó trong đoạn hội thoại.
+2. Trả lời ngắn gọn, rõ ràng, dựa trên thông tin đã được tư vấn ở trên
+   (liều dùng, thời gian uống, số viên mỗi ngày, giá, cách dùng...).
+3. Nếu trong đoạn hội thoại chưa có đủ thông tin để trả lời, hãy nói rõ:
+   'Trong phần tư vấn phía trên em chưa ghi rõ phần này, anh/chị cho em xin lại câu hỏi đầy đủ hơn...'
+4. Cuối cùng vẫn nhắc: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh (nếu câu trả lời liên quan đến sản phẩm).
+
+Bắt đầu trả lời bằng tiếng Việt, giọng tư vấn viên thân thiện, chuyên nghiệp.
+"""
+    return call_openai_responses(prompt)
+
+# =====================================================================
+#   HANDLER CHO CÁC MODE ĐẶC BIỆT
+# =====================================================================
 def handle_buy_and_payment_info():
     return (
         "Để mua hàng, anh/chị có thể chọn một trong các cách sau:\n\n"
@@ -405,29 +514,45 @@ def handle_channel_navigation():
         "Nếu cần hỗ trợ gấp, anh/chị gọi trực tiếp hotline giúp em nhé."
     )
 
-
+# =====================================================================
+#   MODE DETECTION
+# =====================================================================
 def detect_mode(user_message: str) -> str:
     """Đoán xem user đang hỏi về combo / sản phẩm / mua hàng / kênh / kinh doanh."""
     text_norm = strip_accents(user_message)
 
     # Hỏi kinh doanh, chính sách, hoa hồng
     business_keywords = [
-        "chinh sach", "hoa hong", "tuyen dung", "len cap",
-        "leader", "doanh so", "muc tieu thang"
+        "chinh sach",
+        "hoa hong",
+        "tuyen dung",
+        "len cap",
+        "leader",
+        "doanh so",
+        "muc tieu thang",
     ]
     if any(k in text_norm for k in business_keywords):
         return "business"
 
     # Hỏi mua hàng / thanh toán
     buy_keywords = [
-        "mua", "dat hang", "thanh toan", "ship", "giao hang", "dat mua"
+        "mua",
+        "dat hang",
+        "thanh toan",
+        "ship",
+        "giao hang",
+        "dat mua",
     ]
     if any(k in text_norm for k in buy_keywords):
         return "buy"
 
     # Hỏi kênh, fanpage, zalo
     channel_keywords = [
-        "fanpage", "zalo", "kenh", "website", "trang web"
+        "fanpage",
+        "zalo",
+        "kenh",
+        "website",
+        "trang web",
     ]
     if any(k in text_norm for k in channel_keywords):
         return "channel"
@@ -451,8 +576,18 @@ def log_conversation(payload: dict):
     except Exception as e:
         print("[WARN] Log error:", e)
 
-def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = False):
+# =====================================================================
+#   CORE CHAT LOGIC
+# =====================================================================
+def handle_chat(
+    user_message: str,
+    mode: str | None = None,
+    return_meta: bool = False,
+    history: list | None = None,
+):
     text = (user_message or "").strip()
+    history = history or []
+
     if not text:
         reply = "Em chưa nhận được câu hỏi của anh/chị."
         if return_meta:
@@ -465,10 +600,22 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
             return reply, meta
         return reply
 
+    # Nếu là câu follow-up, dùng luôn lịch sử để trả lời
+    if history and looks_like_followup(text):
+        reply = llm_answer_with_history(text, history)
+        if return_meta:
+            meta = {
+                "mode_detected": "followup",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
+
     detected_mode = detect_mode(text) if not mode else mode.lower().strip()
     mode = detected_mode
 
-    # meta mặc định
     requested_tags = extract_tags_from_text(text)
     meta = {
         "mode_detected": mode,
@@ -476,10 +623,9 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
         "selected_combos": [],
         "selected_products": [],
     }
-    
-    # 👇 THÊM DÒNG NÀY
+
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
-    
+
     # Các mode đơn giản
     if mode == "buy":
         reply = handle_buy_and_payment_info()
@@ -501,7 +647,11 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
 
     # Các mode về sức khỏe: combo / product / auto
     want_combo = "combo" in strip_accents(text) or mode == "combo"
-    want_product = "san pham" in strip_accents(text) or "sản phẩm" in text.lower() or mode == "product"
+    want_product = (
+        "san pham" in strip_accents(text)
+        or "sản phẩm" in text.lower()
+        or mode == "product"
+    )
 
     if want_combo and not want_product:
         combos, covered_tags = select_combos_for_tags(requested_tags, text)
@@ -545,6 +695,9 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
         return reply, meta
     return reply
 
+# =====================================================================
+#   API /openai-chat – LOG DB + NHỚ CÂU CŨ + NGỮ CẢNH
+# =====================================================================
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
     start_time = time.time()
@@ -561,35 +714,43 @@ def openai_chat():
         channel = body.get("channel") or "web"
         user_id = body.get("user_id") or ""
 
-        # Nếu client không gửi session_id, tự sinh tạm
+        # Nếu client không gửi session_id, tự sinh tạm (ít nhất cho web demo)
         if not session_id:
             session_id = f"web-{request.remote_addr}-{int(time.time())}"
 
-        # 1) Lưu message gốc của user
-        try:
-            save_message(session_id, "user", user_message)
-        except Exception as e:
-            print("[DB ERROR] Cannot save user message:", e)
-
-        # 2) Kiểm tra xem user có yêu cầu 'trả lời lại câu hỏi trên' không
-        message_for_ai = user_message
         used_history_message = ""
-        if looks_like_repeat_request(user_message):
+        message_for_ai = user_message
+
+        # 1) Trước khi lưu DB, kiểm tra xem có phải 'trả lời lại câu hỏi trên' không
+        if looks_like_repeat_request(user_message) and session_id:
             last_q = get_last_user_message(session_id)
             if last_q:
                 used_history_message = last_q
                 message_for_ai = last_q
                 print(
-                    "[DEBUG] Repeat request detected. Using last user question from history:",
+                    "[DEBUG] Repeat request detected. Using last user question:",
                     last_q,
                 )
 
-        # 3) Xử lý chat (combo/product/auto/business/buy/channel)
+        # 2) Lưu message gốc của user vào DB
+        try:
+            save_message(session_id, "user", user_message)
+        except Exception as e:
+            print("[DB ERROR] Cannot save user message:", e)
+
+        # 3) Lấy history sau khi đã lưu, để follow-up hiểu được cả câu vừa hỏi
+        history = []
+        try:
+            history = get_recent_history(session_id, limit=10)
+        except Exception as e:
+            print("[DB ERROR] Cannot get history:", e)
+
+        # 4) Xử lý chat
         reply_text, meta = handle_chat(
-            message_for_ai, mode or None, return_meta=True
+            message_for_ai, mode or None, return_meta=True, history=history
         )
 
-        # 4) Lưu bot reply vào DB
+        # 5) Lưu bot reply vào DB
         try:
             save_message(session_id, "assistant", reply_text)
         except Exception as e:
@@ -597,14 +758,15 @@ def openai_chat():
 
         latency_ms = int((time.time() - start_time) * 1000)
 
+        # 6) Gửi log sang Google Sheets (webhook Apps Script)
         log_payload = {
             "timestamp": datetime.utcnow().isoformat(),
             "channel": channel,
             "session_id": session_id,
             "user_id": user_id,
             "user_message": user_message,
-            "effective_message": effective_message,  # 👈 xem Bot đã dùng câu nào để xử lý
-            "retry_used": retry_used,
+            "message_for_ai": message_for_ai,
+            "used_history_message": used_history_message,
             "bot_reply": reply_text,
             "mode_detected": meta.get("mode_detected"),
             "health_tags": meta.get("health_tags", []),
@@ -618,15 +780,19 @@ def openai_chat():
 
     except Exception as e:
         print("❌ ERROR /openai-chat:", e)
-        return jsonify({
-            "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
-        }), 500
+        return jsonify(
+            {
+                "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
+            }
+        ), 500
 
-
+# =====================================================================
+#   HEALTHCHECK
+# =====================================================================
 @app.route("/", methods=["GET"])
 def home():
     return "🔥 Greenway / Welllab Chatbot Gateway đang chạy ngon lành!", 200
 
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
