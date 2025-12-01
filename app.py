@@ -547,44 +547,55 @@ def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = 
 
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
-    data = request.get_json(silent=True) or {}
     start_time = time.time()
     try:
-        body = request.get_json(force=True)
+        body = request.get_json(force=True) or {}
+
         user_message = (body.get("message") or "").strip()
-        mode = (body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+        mode = (
+            (body.get("mode") or "").strip().lower()
+            if isinstance(body, dict)
+            else ""
+        )
         session_id = body.get("session_id") or ""
         channel = body.get("channel") or "web"
         user_id = body.get("user_id") or ""
-        
-        # >>> MỚI: lưu câu hỏi của user vào DB NGAY LẬP TỨC
+
+        # Nếu client không gửi session_id, tự sinh tạm
+        if not session_id:
+            session_id = f"web-{request.remote_addr}-{int(time.time())}"
+
+        # 1) Lưu message gốc của user
         try:
-            if session_id and user_message:
-                save_message(session_id, "user", user_message)
-        except Exception as db_err:
-            print("[WARN] DB log user error:", db_err)
+            save_message(session_id, "user", user_message)
+        except Exception as e:
+            print("[DB ERROR] Cannot save user message:", e)
 
-        # >>> MỚI: xử lý case 'trả lời lại câu hỏi trên'
-        effective_message = user_message
-        retry_used = False
-        if session_id and is_retry_phrase(user_message):
-            last_q = get_last_user_question_for_retry(session_id)
+        # 2) Kiểm tra xem user có yêu cầu 'trả lời lại câu hỏi trên' không
+        message_for_ai = user_message
+        used_history_message = ""
+        if looks_like_repeat_request(user_message):
+            last_q = get_last_user_message(session_id)
             if last_q:
-                print("[DEBUG] Retry phrase detected, dùng lại câu hỏi:", last_q)
-                effective_message = last_q
-                retry_used = True
+                used_history_message = last_q
+                message_for_ai = last_q
+                print(
+                    "[DEBUG] Repeat request detected. Using last user question from history:",
+                    last_q,
+                )
 
-        # Gọi handler với effective_message
-        reply_text, meta = handle_chat(user_message, mode or None, return_meta=True)
+        # 3) Xử lý chat (combo/product/auto/business/buy/channel)
+        reply_text, meta = handle_chat(
+            message_for_ai, mode or None, return_meta=True
+        )
+
+        # 4) Lưu bot reply vào DB
+        try:
+            save_message(session_id, "assistant", reply_text)
+        except Exception as e:
+            print("[DB ERROR] Cannot save bot reply:", e)
 
         latency_ms = int((time.time() - start_time) * 1000)
-
-        # >>> MỚI: lưu trả lời của Bot vào DB
-        try:
-            if session_id and reply_text:
-                save_message(session_id, "assistant", reply_text)
-        except Exception as db_err:
-            print("[WARN] DB log assistant error:", db_err)
 
         log_payload = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -618,3 +629,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
