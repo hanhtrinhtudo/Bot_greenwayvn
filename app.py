@@ -1,6 +1,10 @@
 import os
 import json
+import time
 import unicodedata
+from datetime import datetime
+
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -20,6 +24,8 @@ FANPAGE_URL = os.getenv("FANPAGE_URL", "https://facebook.com/ten-fanpage")
 ZALO_OA_URL = os.getenv("ZALO_OA_URL", "https://zalo.me/ten-oa")
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://greenwayglobal.vn")
 
+LOG_WEBHOOK_URL = os.getenv("LOG_WEBHOOK_URL", "")  # 👈 Webhook Apps Script
+
 # ===== Init App =====
 app = Flask(__name__)
 CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
@@ -27,6 +33,9 @@ CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
+# =====================================================================
+#   LOAD DỮ LIỆU JSON
+# =====================================================================
 def load_json_file(path, default=None):
     if default is None:
         default = {}
@@ -46,7 +55,6 @@ MULTI_ISSUE_RULES = load_json_file("multi_issue_rules.json", {"rules": []})
 
 PRODUCTS = PRODUCTS_DATA.get("products", [])
 COMBOS = COMBOS_DATA.get("combos", [])
-
 
 def strip_accents(text: str) -> str:
     if not isinstance(text, str):
@@ -336,90 +344,140 @@ def detect_mode(user_message: str) -> str:
 
     return "auto"
 
+# =====================================================================
+#   LOG CONVERSATION → GOOGLE SHEETS
+# =====================================================================
+def log_conversation(payload: dict):
+    if not LOG_WEBHOOK_URL:
+        return
+    try:
+        requests.post(LOG_WEBHOOK_URL, json=payload, timeout=2)
+    except Exception as e:
+        print("[WARN] Log error:", e)
 
-def handle_chat(user_message: str, mode: str | None = None) -> str:
+def handle_chat(user_message: str, mode: str | None = None, return_meta: bool = False):
     text = (user_message or "").strip()
     if not text:
-        return "Em chưa nhận được câu hỏi của anh/chị."
+        reply = "Em chưa nhận được câu hỏi của anh/chị."
+        if return_meta:
+            meta = {
+                "mode_detected": "",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+            }
+            return reply, meta
+        return reply
 
-    if not mode:
-        mode = detect_mode(text)
-    mode = mode.lower().strip()
+    detected_mode = detect_mode(text) if not mode else mode.lower().strip()
+    mode = detected_mode
+
+    # meta mặc định
+    requested_tags = extract_tags_from_text(text)
+    meta = {
+        "mode_detected": mode,
+        "health_tags": requested_tags,
+        "selected_combos": [],
+        "selected_products": [],
+    }
     
     # 👇 THÊM DÒNG NÀY
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
     
     # Các mode đơn giản
     if mode == "buy":
-        return handle_buy_and_payment_info()
+        reply = handle_buy_and_payment_info()
+        if return_meta:
+            return reply, meta
+        return reply
+
     if mode == "channel":
-        return handle_channel_navigation()
+        reply = handle_channel_navigation()
+        if return_meta:
+            return reply, meta
+        return reply
+
     if mode == "business":
-        return handle_escalate_to_hotline()
+        reply = handle_escalate_to_hotline()
+        if return_meta:
+            return reply, meta
+        return reply
 
     # Các mode về sức khỏe: combo / product / auto
-    requested_tags = extract_tags_from_text(text)
-
     want_combo = "combo" in strip_accents(text) or mode == "combo"
     want_product = "san pham" in strip_accents(text) or "sản phẩm" in text.lower() or mode == "product"
 
     if want_combo and not want_product:
         combos, covered_tags = select_combos_for_tags(requested_tags, text)
-        return llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+        meta["selected_combos"] = [c.get("id") for c in combos]
+        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+        if return_meta:
+            return reply, meta
+        return reply
 
     if want_product and not want_combo:
         products = search_products_by_tags(requested_tags)
-        return llm_answer_for_products(text, requested_tags, products)
+        meta["selected_products"] = [p.get("id") for p in products]
+        reply = llm_answer_for_products(text, requested_tags, products)
+        if return_meta:
+            return reply, meta
+        return reply
 
     # AUTO: ưu tiên combo, nếu không có thì show sản phẩm
     combos, covered_tags = select_combos_for_tags(requested_tags, text)
     if combos:
-        return llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+        meta["selected_combos"] = [c.get("id") for c in combos]
+        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+        if return_meta:
+            return reply, meta
+        return reply
 
     products = search_products_by_tags(requested_tags)
     if products:
-        return llm_answer_for_products(text, requested_tags, products)
+        meta["selected_products"] = [p.get("id") for p in products]
+        reply = llm_answer_for_products(text, requested_tags, products)
+        if return_meta:
+            return reply, meta
+        return reply
 
     # Không match gì
-    return (
+    reply = (
         "Hiện em chưa tìm thấy combo hay sản phẩm nào phù hợp trong dữ liệu cho trường hợp này. "
         f"Anh/chị có thể nói rõ hơn tình trạng sức khỏe, hoặc liên hệ hotline {HOTLINE} để tuyến trên hỗ trợ kỹ hơn ạ."
     )
-
+    if return_meta:
+        return reply, meta
+    return reply
 
 @app.route("/openai-chat", methods=["POST"])
 def openai_chat():
+    start_time = time.time()
     try:
-        # Log body để biết DF CX gửi gì
-        raw_body = request.get_data(as_text=True)
-        print("=== /openai-chat RAW BODY ===")
-        print(raw_body)
+        body = request.get_json(force=True)
+        user_message = (body.get("message") or "").strip()
+        mode = (body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+        session_id = body.get("session_id") or ""
+        channel = body.get("channel") or "web"
+        user_id = body.get("user_id") or ""
 
-        body = request.get_json(silent=True)
-        if not isinstance(body, dict):
-            body = {}
-        print("=== PARSED BODY (1) ===", body)
+        reply_text, meta = handle_chat(user_message, mode or None, return_meta=True)
 
-        # Nếu DF CX bọc thêm 1 lớp kiểu { "requestBody": { "message": ... } }
-        if "message" not in body:
-            for key in ["requestBody", "body", "data"]:
-                inner = body.get(key)
-                if isinstance(inner, dict) and "message" in inner:
-                    body = inner
-                    print(f"=== UNWRAP FROM {key} ===", body)
-                    break
+        latency_ms = int((time.time() - start_time) * 1000)
 
-        # Lấy message + mode (nếu có)
-        user_message = str(body.get("message", "")).strip()
-        mode = str(body.get("mode", "")).strip().lower()
-
-        # Nếu mode rỗng / auto / default thì để gateway tự detect
-        if mode in ["", "auto", "default", "none", "null"]:
-            mode = None
-
-        print(f"=== FINAL MESSAGE = {user_message!r}, mode = {mode!r} ===")
-
-        reply_text = handle_chat(user_message, mode)
+        log_payload = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "channel": channel,
+            "session_id": session_id,
+            "user_id": user_id,
+            "user_message": user_message,
+            "bot_reply": reply_text,
+            "mode_detected": meta.get("mode_detected"),
+            "health_tags": meta.get("health_tags", []),
+            "selected_combos": meta.get("selected_combos", []),
+            "selected_products": meta.get("selected_products", []),
+            "latency_ms": latency_ms,
+        }
+        log_conversation(log_payload)
 
         return jsonify({"reply": reply_text})
 
@@ -430,8 +488,13 @@ def openai_chat():
         }), 500
 
 
+@app.route("/", methods=["GET"])
+def home():
+    return "🔥 Greenway / Welllab Chatbot Gateway đang chạy ngon lành!", 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
