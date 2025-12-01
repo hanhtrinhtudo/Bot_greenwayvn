@@ -786,6 +786,18 @@ def openai_chat():
             }
         ), 500
 
+@app.route("/debug-db", methods=["GET"])
+def debug_db():
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT NOW()")
+            now = cur.fetchone()[0]
+        conn.close()
+        return f"DB OK, time = {now}", 200
+    except Exception as e:
+        return f"DB ERROR: {e}", 500
+
 # =====================================================================
 #   HEALTHCHECK
 # =====================================================================
@@ -796,3 +808,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
