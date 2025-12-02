@@ -486,13 +486,25 @@ def ai_classify_intent(
     user_message: str, history_messages: list[dict] | None = None
 ) -> dict:
     """
-    Phân loại ý định của người dùng:
-    greeting, smalltalk, health_question, product_question, combo_question,
-    business_policy, buy_payment, channel_info, other
+    Phân loại ý định của người dùng ở tầng "ngữ nghĩa", không chỉ dựa vào từ khoá.
+
+    Các intent hợp lệ:
+    - greeting         : chào hỏi đơn thuần
+    - smalltalk        : nói chuyện linh tinh, đời sống, đùa vui
+    - conversation_flow: câu MỞ ĐẦU / DẪN NHẬP / ĐỊNH HƯỚNG CHỦ ĐỀ nhưng CHƯA hỏi nội dung
+    - health_question  : hỏi về triệu chứng, tình trạng sức khoẻ
+    - product_question : hỏi về MỘT sản phẩm cụ thể (tên, cách dùng, giá, link...)
+    - combo_question   : hỏi gợi ý combo / bộ sản phẩm
+    - business_policy  : hỏi về chính sách, hoa hồng, tuyển dụng, KPI...
+    - buy_payment      : hỏi cách mua hàng, giao hàng, thanh toán
+    - channel_info     : hỏi link fanpage, Zalo OA, website, kênh liên hệ
+    - other            : mọi trường hợp khác
     """
     history_messages = history_messages or []
+
+    # Ghép lịch sử thành text ngắn gọn cho model (nếu có)
     history_text_lines = []
-    for m in history_messages[-6:]:
+    for m in history_messages[-6:]:  # lấy tối đa 6 câu gần nhất
         role = m.get("role", "user")
         content = (m.get("content") or "").replace("\n", " ").strip()
         if not content:
@@ -502,28 +514,75 @@ def ai_classify_intent(
     history_text = "\n".join(history_text_lines)
 
     prompt = f"""
-Bạn là module PHÂN LOẠI Ý ĐỊNH cho chatbot tư vấn sức khỏe & sản phẩm Greenway / Welllab.
+Bạn là MODULE PHÂN LOẠI Ý ĐỊNH cho trợ lý sức khỏe & sản phẩm Greenway / Welllab.
 
-Nhiệm vụ:
-- Chỉ phân loại ý định, KHÔNG tự tư vấn sức khỏe.
-- Dựa vào lịch sử hội thoại (nếu có) và câu mới nhất của người dùng.
+NHIỆM VỤ:
+- Hiểu NGỮ CẢNH hội thoại và câu nói mới nhất của người dùng.
+- Chỉ phân loại intent, KHÔNG tự tư vấn sức khỏe hay sản phẩm.
+- Đặc biệt phân biệt rõ các câu CHỈ ĐỊNH HƯỚNG (mở đầu, dọn đường) với câu HỎI THẬT.
 
-Các loại intent hợp lệ:
-- "greeting"
-- "smalltalk"
-- "health_question"
-- "product_question"
-- "combo_question"
-- "business_policy"
-- "buy_payment"
-- "channel_info"
-- "other"
+ĐỊNH NGHĨA CÁC INTENT:
 
-Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
+1. "greeting"
+   - Câu chào đơn giản: "chào em", "hello", "hi", "chào buổi sáng"...
+
+2. "smalltalk"
+   - Nói chuyện đời thường: hỏi thăm, đùa vui, tâm sự, nhưng không yêu cầu tư vấn
+     sản phẩm/chính sách rõ ràng.
+   - Ví dụ: "Hôm nay trời nóng ghê", "Dạo này bận không em?"...
+
+3. "conversation_flow"
+   - Câu MỞ ĐẦU, DẪN NHẬP, ĐỊNH HƯỚNG CHỦ ĐỀ nhưng CHƯA hỏi nội dung cụ thể.
+   - Người dùng báo trước là HỌ SẮP HỎI về sản phẩm/chính sách/vấn đề gì đó.
+   - Ví dụ:
+     * "Anh muốn hỏi về sản phẩm và chính sách."
+     * "Cho em hỏi xíu về chế độ hoa hồng."
+     * "Giờ chị muốn hỏi về mấy sản phẩm cho mẹ chị."
+     * "Em đang có một số câu hỏi về sức khỏe."
+   - Điểm quan trọng: câu này CHƯA ĐỦ THÔNG TIN để tư vấn combo/sản phẩm cụ thể.
+
+4. "health_question"
+   - Hỏi về TRIỆU CHỨNG, VẤN ĐỀ SỨC KHỎE cụ thể: đau chỗ nào, bệnh gì, đang điều trị gì...
+   - Có thể kèm câu hỏi dùng sản phẩm/combo, nhưng trọng tâm là mô tả tình trạng.
+
+5. "product_question"
+   - Hỏi về MỘT sản phẩm cụ thể (đã nêu tên, mã, hoặc mô tả rõ ràng).
+   - Quan tâm đến: công dụng, cách dùng, giá, thành phần, có dùng chung được không...
+
+6. "combo_question"
+   - Hỏi GỢI Ý COMBO/BỘ SẢN PHẨM cho một vấn đề sức khỏe.
+   - Ví dụ: "Bị đau dạ dày thì nên dùng combo nào?", "Cho chị combo xương khớp tốt nhất."
+
+7. "business_policy"
+   - Hỏi về chính sách, hoa hồng, tuyển dụng, thăng cấp, KPI, thưởng, quyền lợi khi làm cộng tác viên/TVV/leader...
+
+8. "buy_payment"
+   - Hỏi về mua hàng, giao hàng, thanh toán, đổi trả.
+   - Ví dụ: "Mua ở đâu?", "Ship thế nào?", "Có COD không?", "Thanh toán ra sao?"
+
+9. "channel_info"
+   - Hỏi link, kênh liên hệ: fanpage, Zalo OA, website, hotline, nhóm Telegram...
+
+10. "other"
+   - Không thuộc các nhóm trên.
+
+LUẬT QUAN TRỌNG:
+- Nếu câu nói vừa là chào hỏi, vừa báo trước chủ đề (ví dụ: "Chào em, hôm nay anh muốn hỏi
+  về sản phẩm cho bố anh"), thì:
+  * Nếu đã có VẤN ĐỀ SỨC KHỎE CỤ THỂ → ưu tiên "health_question" / "combo_question" / "product_question".
+  * Nếu mới chỉ nói kiểu "muốn hỏi về sản phẩm/chính sách" mà CHƯA có vấn đề cụ thể
+    → chọn "conversation_flow".
+- CHỈ chọn "health_question" / "combo_question" / "product_question" khi nội dung đủ cụ thể
+  để bắt đầu tư vấn chuyên môn.
+- Nếu lưỡng lự giữa "smalltalk" và "conversation_flow":
+  * Nếu câu giống như "cho em hỏi cái này với", "em định hỏi chị chuyện này" → "conversation_flow".
+  * Nếu chỉ là tán gẫu, chia sẻ cảm xúc → "smalltalk".
+
+Hãy trả về JSON DUY NHẤT, không giải thích thêm, có dạng:
 
 {{
-  "intent": "...",
-  "reason": "giải thích rất ngắn, tiếng Việt"
+  "intent": "greeting | smalltalk | conversation_flow | health_question | product_question | combo_question | business_policy | buy_payment | channel_info | other",
+  "reason": "giải thích rất ngắn, tiếng Việt tại sao chọn intent này"
 }}
 
 ----- LỊCH SỬ HỘI THOẠI (nếu có) -----
@@ -535,10 +594,10 @@ Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
 
     raw = call_openai_responses(prompt)
     data = safe_parse_json(raw, default={"intent": "other", "reason": ""})
+
     intent = data.get("intent") or "other"
     data["intent"] = intent
     return data
-
 
 def ai_analyze_symptom(user_message: str, history_messages: list[dict] | None = None) -> dict:
     """
@@ -946,6 +1005,30 @@ def handle_chat(
     intent = intent_info.get("intent", "other")
     print("[INTENT]", intent, "|", intent_info.get("reason", ""))
 
+    # === 0. Xử lý ý định "conversation_flow" (mở đầu – định hướng – chưa hỏi rõ) ===
+    if intent == "conversation_flow":
+        reply = (
+            "Dạ em hiểu anh/chị đang muốn trao đổi về sản phẩm hoặc chính sách ạ. "
+            "Anh/chị nói rõ giúp em nội dung cụ thể mà anh/chị quan tâm, "
+            "để em tư vấn sát nhất và chính xác hơn nha. 😊"
+        )
+
+        if return_meta:
+            meta = {
+                "intent": intent,
+                "mode_detected": "conversation_flow",
+                "health_tags": [],
+                "selected_combos": [],
+                "selected_products": [],
+                "ai_main_issue": "",
+                "ai_body_system": "",
+                "ai_severity": "",
+                "ai_groups": [],
+            }
+            return reply, meta
+
+        return reply
+    
     # 2) Phân tích triệu chứng ở tầng 'chuyên gia'
     analysis = {
         "main_issue": "",
@@ -1493,3 +1576,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
