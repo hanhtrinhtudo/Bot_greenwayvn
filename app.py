@@ -1259,7 +1259,9 @@ def openai_chat():
         return jsonify({"reply": reply_text})
 
     except Exception as e:
-        print("❌ ERROR /openai-chat:", e)
+    import traceback
+    print("❌ ERROR /openai-chat:", e)
+    print(traceback.format_exc())
         return jsonify(
             {
                 "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
@@ -1395,4 +1397,5 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
