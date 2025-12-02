@@ -2,6 +2,7 @@ import os
 import json
 import time
 import unicodedata
+import traceback
 from datetime import datetime
 
 import psycopg2
@@ -30,13 +31,25 @@ ZALO_OA_URL = os.getenv("ZALO_OA_URL", "https://zalo.me/ten-oa")
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://greenwayglobal.vn")
 
 LOG_WEBHOOK_URL = os.getenv("LOG_WEBHOOK_URL", "")  # Webhook Apps Script
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")  # dùng chung cho /admin/*
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")        # dùng chung cho /admin/*
 
 # ===== Init App =====
 app = Flask(__name__)
 CORS(app)  # Cho phép web / Conversational Agents gọi API không bị CORS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# =====================================================================
+#   DB – KẾT NỐI
+# =====================================================================
+def get_db_conn():
+    """
+    Mở connection tới PostgreSQL (Render cung cấp DATABASE_URL).
+    Có bọc try/except ở ngoài các hàm sử dụng.
+    """
+    if not DATABASE_URL:
+        raise Exception("Thiếu biến môi trường DATABASE_URL")
+    return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
 
 # =====================================================================
 #   DB – QUẢN LÝ TVV (HỒ SƠ TƯ VẤN VIÊN)
@@ -110,17 +123,8 @@ def list_tvv_users(q: str = "", limit: int = 200):
         conn.close()
 
 # =====================================================================
-#   DB HELPER – KẾT NỐI & LỊCH SỬ HỘI THOẠI
+#   DB HELPER – LỊCH SỬ HỘI THOẠI
 # =====================================================================
-def get_db_conn():
-    """
-    Mở connection tới PostgreSQL (Render cung cấp DATABASE_URL).
-    """
-    if not DATABASE_URL:
-        raise Exception("Thiếu biến môi trường DATABASE_URL")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
-
-
 def get_recent_history(session_id: str, limit: int = 8):
     """
     Lấy lịch sử gần nhất của 1 phiên chat (user + assistant).
@@ -271,6 +275,9 @@ def looks_like_followup(text: str) -> bool:
 #   LOAD DỮ LIỆU JSON
 # =====================================================================
 def load_json_file(path, default=None):
+    """
+    Đọc file JSON an toàn – lỗi gì cũng trả default.
+    """
     if default is None:
         default = {}
     try:
@@ -278,6 +285,7 @@ def load_json_file(path, default=None):
             return json.load(f)
     except Exception as e:
         print(f"[WARN] Không đọc được file {path}: {e}")
+        print(traceback.format_exc())
         return default
 
 
@@ -401,6 +409,7 @@ def search_products_by_tags(requested_tags, limit=5):
 
     return results[:limit]
 
+
 def search_products_by_groups(groups, limit=5):
     """
     Chọn sản phẩm theo group (tieu_hoa, gan, than, ...),
@@ -422,23 +431,34 @@ def search_products_by_groups(groups, limit=5):
 #   OPENAI RESPONSES
 # =====================================================================
 def call_openai_responses(prompt_text: str) -> str:
-    """Gọi Responses API giống style dự án cũ của anh."""
-    try:
-        res = client.responses.create(
-            model="gpt-4.1-mini",
-            input=prompt_text,
-        )
-        reply_text = getattr(res, "output_text", "") or ""
-        reply_text = reply_text.strip()
-        if not reply_text:
-            reply_text = "Hiện tại em không nhận được kết quả từ hệ thống OpenAI."
-        return reply_text
-    except Exception as e:
-        print("❌ ERROR OpenAI Responses:", e)
-        return (
-            "Xin lỗi, hiện tại hệ thống AI đang gặp lỗi, anh/chị vui lòng thử lại sau "
-            "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
-        )
+    """
+    Gọi Responses API an toàn:
+    - Có retry, không để exception văng ra ngoài.
+    """
+    if not prompt_text:
+        return "Em chưa nhận được nội dung để xử lý."
+
+    for attempt in range(2):  # tối đa 2 lần thử
+        try:
+            res = client.responses.create(
+                model="gpt-4.1-mini",
+                input=prompt_text,
+            )
+            reply_text = getattr(res, "output_text", "") or ""
+            reply_text = str(reply_text).strip()
+            if not reply_text:
+                reply_text = "Hiện tại em không nhận được kết quả từ hệ thống OpenAI."
+            return reply_text
+        except Exception as e:
+            print(f"❌ ERROR OpenAI Responses (attempt {attempt+1}):", e)
+            print(traceback.format_exc())
+            time.sleep(0.3)
+
+    # Nếu cả 2 lần đều lỗi
+    return (
+        "Xin lỗi, hiện tại hệ thống AI đang gặp lỗi, anh/chị vui lòng thử lại sau "
+        "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
+    )
 
 
 def safe_parse_json(text: str, default=None):
@@ -450,36 +470,29 @@ def safe_parse_json(text: str, default=None):
     try:
         return json.loads(text)
     except Exception:
-        # Thử bóc từ { ... }
         try:
             start = text.find("{")
             end = text.rfind("}")
             if start != -1 and end != -1 and end > start:
-                return json.loads(text[start:end+1])
+                return json.loads(text[start:end + 1])
         except Exception:
             return default
     return default
 
-
+# =====================================================================
+#   AI INTENT & PHÂN TÍCH TRIỆU CHỨNG
+# =====================================================================
 def ai_classify_intent(
     user_message: str, history_messages: list[dict] | None = None
 ) -> dict:
     """
     Phân loại ý định của người dùng:
-    - greeting: chào hỏi
-    - smalltalk: nói chuyện linh tinh, hỏi thăm, câu đời thường
-    - health_question: hỏi về vấn đề sức khỏe chung (chưa rõ combo/sản phẩm)
-    - product_question: hỏi về 1 sản phẩm cụ thể
-    - combo_question: hỏi gợi ý combo
-    - business_policy: chính sách / hoa hồng / tuyển dụng
-    - buy_payment: cách mua hàng, thanh toán, giao hàng
-    - channel_info: hỏi link fanpage, zalo, website
-    - other: không rõ / chủ đề khác
+    greeting, smalltalk, health_question, product_question, combo_question,
+    business_policy, buy_payment, channel_info, other
     """
     history_messages = history_messages or []
-    # Ghép lịch sử thành text
     history_text_lines = []
-    for m in history_messages[-6:]:  # lấy tối đa 6 câu gần nhất
+    for m in history_messages[-6:]:
         role = m.get("role", "user")
         content = (m.get("content") or "").replace("\n", " ").strip()
         if not content:
@@ -496,20 +509,20 @@ Nhiệm vụ:
 - Dựa vào lịch sử hội thoại (nếu có) và câu mới nhất của người dùng.
 
 Các loại intent hợp lệ:
-- "greeting"       : chào hỏi, hỏi thăm kiểu "chào em", "hello", "dạo này sao rồi"...
-- "smalltalk"      : nói chuyện đời thường, hỏi linh tinh, đùa vui, không yêu cầu tư vấn sản phẩm/chính sách.
-- "health_question": hỏi về triệu chứng, tình trạng sức khỏe chung (có hoặc không nhắc combo/sản phẩm).
-- "product_question": hỏi về MỘT sản phẩm cụ thể, tên, cách dùng, tác dụng, giá, link...
-- "combo_question" : hỏi gợi ý combo / bộ sản phẩm cho vấn đề sức khỏe.
-- "business_policy": hỏi về chính sách, hoa hồng, tuyển dụng, thăng cấp, KPI, doanh số...
-- "buy_payment"    : hỏi về cách mua hàng, giao hàng, thanh toán.
-- "channel_info"   : hỏi xin link fanpage, Zalo OA, website, kênh liên hệ.
-- "other"          : mọi trường hợp khác không nằm trong các nhóm trên.
+- "greeting"
+- "smalltalk"
+- "health_question"
+- "product_question"
+- "combo_question"
+- "business_policy"
+- "buy_payment"
+- "channel_info"
+- "other"
 
 Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
 
 {{
-  "intent": "greeting | smalltalk | health_question | product_question | combo_question | business_policy | buy_payment | channel_info | other",
+  "intent": "...",
   "reason": "giải thích rất ngắn, tiếng Việt"
 }}
 
@@ -526,19 +539,10 @@ Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
     data["intent"] = intent
     return data
 
+
 def ai_analyze_symptom(user_message: str, history_messages: list[dict] | None = None) -> dict:
     """
     Phân tích triệu chứng / tình huống sức khỏe ở mức 'chuyên gia'.
-
-    Trả về JSON dạng:
-    {
-      "main_issue": "tiêu hoá / đại tràng / gan mật / ...",
-      "body_system": "digestive | liver | immune | cardio | other",
-      "symptom_keywords": ["đi ngoài nhiều lần", "đau bụng", ...],
-      "severity": "mild | moderate | severe",
-      "recommended_groups": ["tieu_hoa", "dai_trang"],
-      "suggested_tags": ["tieu_hoa", "dai_trang"]
-    }
     """
     history_messages = history_messages or []
     history_text_lines = []
@@ -557,7 +561,7 @@ Bạn là module PHÂN TÍCH TRIỆU CHỨNG cho trợ lý sức khỏe Greenway
 Nhiệm vụ:
 - ĐỌC và HIỂU mô tả triệu chứng của người dùng (TVV/Leader hoặc khách).
 - SUY LUẬN xem vấn đề chính thuộc nhóm nào, mức độ ra sao.
-- Gợi ý các nhóm sản phẩm NÊN ƯU TIÊN (theo group trong dữ liệu: tieu_hoa, gan, than, tim_mach, mien_dich, xuong_khop,...).
+- Gợi ý các nhóm sản phẩm NÊN ƯU TIÊN (theo group trong dữ liệu).
 - Đề xuất thêm các health_tags liên quan (nếu có).
 
 Đầu ra là JSON DUY NHẤT, KHÔNG giải thích thêm, có dạng:
@@ -567,7 +571,7 @@ Nhiệm vụ:
   "body_system": "digestive | liver | immune | cardio | neuro | other",
   "symptom_keywords": ["..."],
   "severity": "mild | moderate | severe",
-  "recommended_groups": ["tieu_hoa", "dai_trang", "men_vi_sinh"],
+  "recommended_groups": ["tieu_hoa", "dai_trang"],
   "suggested_tags": ["tieu_hoa", "dai_trang"]
 }}
 
@@ -589,7 +593,6 @@ Nhiệm vụ:
             "suggested_tags": [],
         },
     )
-    # Đảm bảo các field tối thiểu tồn tại
     data.setdefault("main_issue", "")
     data.setdefault("body_system", "other")
     data.setdefault("symptom_keywords", [])
@@ -599,10 +602,46 @@ Nhiệm vụ:
     return data
 
 
+def build_expert_note(analysis: dict) -> str:
+    """
+    Tạo note tóm tắt phân tích chuyên gia để nhúng vào prompt tư vấn.
+    Người dùng không nhìn thấy nguyên văn, chỉ dùng để định hướng LLM.
+    """
+    if not analysis:
+        return ""
+
+    main_issue = analysis.get("main_issue", "")
+    body_system = analysis.get("body_system", "")
+    severity = analysis.get("severity", "")
+    sym_keywords = analysis.get("symptom_keywords") or []
+    sym_text = ", ".join(sym_keywords) if sym_keywords else ""
+
+    note = (
+        "TÓM TẮT PHÂN TÍCH CHUYÊN GIA (để định hướng tư vấn, KHÔNG in nguyên văn cho khách):\n"
+        f"- Vấn đề chính: {main_issue}\n"
+        f"- Hệ cơ quan liên quan: {body_system}\n"
+        f"- Mức độ gợi ý: {severity}\n"
+    )
+    if sym_text:
+        note += f"- Từ khoá triệu chứng: {sym_text}\n"
+
+    note += (
+        "Hãy giải thích cho người dùng theo hướng chuyên gia sức khỏe, dễ hiểu, "
+        "trình bày rõ: vấn đề chính là gì, hướng hỗ trợ ưu tiên ra sao, "
+        "sau đó mới đi vào combo/sản phẩm cụ thể.\n"
+    )
+    return note
+
 # =====================================================================
 #   LLM PROMPTS
 # =====================================================================
-def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
+def llm_answer_for_combos(
+    user_question: str,
+    requested_tags,
+    combos,
+    covered_tags,
+    extra_instruction: str = "",
+):
     if not combos:
         return (
             "Hiện em chưa tìm thấy combo phù hợp trong dữ liệu cho trường hợp này. "
@@ -611,6 +650,8 @@ def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
 
     combos_json = json.dumps(combos, ensure_ascii=False, indent=2)
     tags_text = ", ".join(requested_tags)
+
+    expert_block = extra_instruction or ""
 
     prompt = f"""
 Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
@@ -621,18 +662,19 @@ Dưới đây là câu hỏi và dữ liệu:
 - Câu hỏi của khách / tư vấn viên: "{user_question}"
 - Các tags/vấn đề sức khỏe hệ thống trích xuất được: {tags_text}
 
+{expert_block}
+
 Dữ liệu các combo đã được hệ thống chọn (JSON):
 
 {combos_json}
 
 YÊU CẦU RẤT QUAN TRỌNG:
 
-1. Đọc kỹ câu hỏi, nếu người dùng hỏi NHIỀU Ý (ví dụ: nên dùng combo hay sản phẩm lẻ, loại nào tốt hơn, dùng bao lâu, giá thế nào, ưu tiên giải pháp nào trước...)
+1. Đọc kỹ câu hỏi, nếu người dùng hỏi NHIỀU Ý (ví dụ: nên dùng combo hay sản phẩm lẻ, loại nào tốt hơn, dùng bao lâu, giá thế nào,...)
    thì trước khi trả lời hãy tự xác định và LIỆT KÊ NGẮN GỌN các ý chính họ đang hỏi, dạng:
    - Ý 1: ...
    - Ý 2: ...
    - Ý 3: ...
-   (phần này để tư vấn viên thấy là bạn hiểu đầy đủ câu hỏi).
 
 2. Sau đó TRẢ LỜI TUẦN TỰ TỪNG Ý, không được bỏ sót ý nào.
    Nếu trong câu hỏi có lựa chọn A/B (ví dụ: "dùng sản phẩm hay combo thì tốt hơn", "nếu là sản phẩm thì sản phẩm gì, nếu là combo thì combo nào"):
@@ -640,7 +682,7 @@ YÊU CẦU RẤT QUAN TRỌNG:
    - Đồng thời nêu luôn PHƯƠNG ÁN THAY THẾ (ví dụ nếu khách chỉ đủ khả năng dùng sản phẩm lẻ thì chọn sản phẩm nào, dùng thế nào).
 
 3. Phần tư vấn chính:
-   - Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và logic chuyên môn (tại sao ưu tiên xử lý nhóm cơ quan nào trước, ví dụ: thận – tiết niệu, tiêu hóa, gan,...).
+   - Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và logic chuyên môn (tại sao ưu tiên xử lý nhóm cơ quan nào trước).
    - Với từng combo:
      + Nêu rõ combo này hỗ trợ những vấn đề nào trong các vấn đề khách đang gặp.
      + Liệt kê từng sản phẩm trong combo:
@@ -660,7 +702,12 @@ YÊU CẦU RẤT QUAN TRỌNG:
     return call_openai_responses(prompt)
 
 
-def llm_answer_for_products(user_question, requested_tags, products):
+def llm_answer_for_products(
+    user_question: str,
+    requested_tags,
+    products,
+    extra_instruction: str = "",
+):
     if not products:
         return (
             "Hiện em chưa tìm thấy sản phẩm phù hợp trong dữ liệu cho trường hợp này. "
@@ -669,6 +716,7 @@ def llm_answer_for_products(user_question, requested_tags, products):
 
     products_json = json.dumps(products, ensure_ascii=False, indent=2)
     tags_text = ", ".join(requested_tags)
+    expert_block = extra_instruction or ""
 
     prompt = f"""
 Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
@@ -676,6 +724,8 @@ Bạn chỉ được dùng đúng dữ liệu sản phẩm trong JSON bên dư�
 
 - Câu hỏi: "{user_question}"
 - Các tags/vấn đề sức khỏe: {tags_text}
+
+{expert_block}
 
 Dữ liệu các sản phẩm đã được hệ thống chọn (JSON):
 
@@ -690,7 +740,7 @@ YÊU CẦU RẤT QUAN TRỌNG:
    - Ý 3: ...
 
 2. Sau đó trả lời lần lượt theo từng ý, không được bỏ sót ý nào.
-   Nếu câu hỏi có dạng lựa chọn A/B (sản phẩm này hay sản phẩm kia tốt hơn):
+   Nếu câu hỏi có dạng lựa chọn A/B:
    - Nêu rõ sản phẩm nào NÊN ƯU TIÊN và vì sao.
    - Đưa thêm phương án dự phòng nếu khách không dùng được sản phẩm ưu tiên.
 
@@ -709,6 +759,7 @@ YÊU CẦU RẤT QUAN TRỌNG:
 5. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
 """
     return call_openai_responses(prompt)
+
 
 def llm_answer_with_history(latest_question: str, history: list) -> str:
     """
@@ -744,8 +795,7 @@ YÊU CẦU:
 2. Đọc kỹ câu hỏi mới. Nếu khách hỏi NHIỀU Ý (ví dụ: vừa hỏi lại liều dùng, vừa hỏi giá, vừa hỏi thời gian dùng...),
    hãy LIỆT KÊ NGẮN GỌN các ý chính rồi trả lời tuần tự từng ý, không được bỏ sót.
 
-3. Trả lời ngắn gọn, rõ ràng, dựa trên thông tin đã được tư vấn ở trên
-   (liều dùng, thời gian uống, số viên mỗi ngày, giá, cách dùng...).
+3. Trả lời ngắn gọn, rõ ràng, dựa trên thông tin đã được tư vấn ở trên.
    Nếu trong đoạn hội thoại chưa có đủ thông tin để trả lời một ý nào đó, hãy nói rõ:
    "Trong phần tư vấn phía trên em chưa ghi rõ phần này, anh/chị cho em xin lại câu hỏi đầy đủ hơn..."
 
@@ -879,47 +929,46 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": "",
+                "ai_body_system": "",
+                "ai_severity": "",
+                "ai_groups": [],
+                "ai_tags": [],
             }
             return reply, meta
         return reply
 
-    # Dùng history được truyền từ /openai-chat cho AI phân loại intent
+    # ================== PHÂN LOẠI Ý ĐỊNH & PHÂN TÍCH CHUYÊN GIA ==================
     history_messages = history
 
-    # 1) Gọi AI phân loại ý định
+    # 1) Ý định (intent)
     intent_info = ai_classify_intent(text, history_messages)
     intent = intent_info.get("intent", "other")
     print("[INTENT]", intent, "|", intent_info.get("reason", ""))
 
-    # 2) PHÂN TÍCH TRIỆU CHỨNG Ở TẦNG CHUYÊN GIA
-    analysis = {}
-    ai_tags = []
-    ai_groups = []
-    expert_extra_note = ""
+    # 2) Phân tích triệu chứng ở tầng 'chuyên gia'
+    analysis = {
+        "main_issue": "",
+        "body_system": "other",
+        "symptom_keywords": [],
+        "severity": "mild",
+        "recommended_groups": [],
+        "suggested_tags": [],
+    }
+    ai_tags: list[str] = []
+    ai_groups: list[str] = []
 
     if intent in ("health_question", "combo_question", "product_question", "other"):
-        analysis = ai_analyze_symptom(text, history_messages)
-        ai_tags = analysis.get("suggested_tags") or []
-        ai_groups = analysis.get("recommended_groups") or []
+        try:
+            analysis = ai_analyze_symptom(text, history_messages)
+        except Exception as e:
+            print("❌ ERROR ai_analyze_symptom:", e)
+            print(traceback.format_exc())
+            # giữ analysis default
 
-        expert_extra_note = (
-            "TÓM TẮT PHÂN TÍCH CHUYÊN GIA (không cần in nguyên văn, chỉ dùng để định hướng tư vấn):\n"
-            f"- Vấn đề chính: {analysis.get('main_issue', '')}\n"
-            f"- Hệ cơ quan: {analysis.get('body_system', '')}\n"
-            f"- Mức độ gợi ý: {analysis.get('severity', '')}\n"
-            "Hãy giải thích cho người dùng theo hướng chuyên gia sức khỏe, dễ hiểu, "
-            "trình bày rõ: vấn đề chính là gì, hướng hỗ trợ ưu tiên ra sao, "
-            "sau đó mới đi vào combo/sản phẩm cụ thể.\n"
-        )
-    else:
-        analysis = {
-            "main_issue": "",
-            "body_system": "other",
-            "symptom_keywords": [],
-            "severity": "mild",
-            "recommended_groups": [],
-            "suggested_tags": [],
-        }
+    ai_tags = analysis.get("suggested_tags") or []
+    ai_groups = analysis.get("recommended_groups") or []
+    expert_extra_note = build_expert_note(analysis)
 
     # ================== ROUTING THEO INTENT TỰ NHIÊN ==================
     # 1. Chào hỏi
@@ -940,6 +989,7 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return reply, meta
         return reply
@@ -948,14 +998,14 @@ def handle_chat(
     if intent == "smalltalk":
         smalltalk_reply = call_openai_responses(
             f"""
-    Bạn là trợ lý sức khỏe Greenway/Welllab.
-    Người dùng đang CHỈ NÓI CHUYỆN ĐỜI THƯỜNG, không yêu cầu tư vấn cụ thể.
+Bạn là trợ lý sức khỏe Greenway/Welllab.
+Người dùng đang CHỈ NÓI CHUYỆN ĐỜI THƯỜNG, không yêu cầu tư vấn cụ thể.
 
-    Hãy trả lời thân thiện, ngắn gọn (2-4 câu), có thể đùa nhẹ, 
-    sau đó khéo léo gợi ý rằng nếu họ cần tư vấn về sức khỏe / sản phẩm / combo thì bạn luôn sẵn sàng.
+Hãy trả lời thân thiện, ngắn gọn (2-4 câu), có thể đùa nhẹ,
+sau đó khéo léo gợi ý rằng nếu họ cần tư vấn về sức khỏe / sản phẩm / combo thì bạn luôn sẵn sàng.
 
-    Câu của người dùng: "{text}"
-    """
+Câu của người dùng: "{text}"
+"""
         )
         if return_meta:
             meta = {
@@ -968,6 +1018,7 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return smalltalk_reply, meta
         return smalltalk_reply
@@ -986,6 +1037,7 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return reply, meta
         return reply
@@ -1004,6 +1056,7 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return reply, meta
         return reply
@@ -1022,6 +1075,7 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return reply, meta
         return reply
@@ -1049,17 +1103,27 @@ def handle_chat(
                 "ai_body_system": analysis.get("body_system", ""),
                 "ai_severity": analysis.get("severity", ""),
                 "ai_groups": ai_groups,
+                "ai_tags": ai_tags,
             }
             return reply, meta
         return reply
 
-    # 8. Mode + tags + extra_instruction cho LLM
+    # ================== MODE + TAGS + EXPERT NOTE ==================
     detected_mode = detect_mode(text) if not mode else mode.lower().strip()
     mode = detected_mode
 
-    requested_tags = extract_tags_from_text(text)
-    requested_tags = list(set((requested_tags or []) + (ai_tags or [])))
-    extra_instruction = expert_extra_note  # riêng tầng chuyên gia A1
+    # Tags từ từ điển + tags do AI gợi ý
+    requested_tags = extract_tags_from_text(text) or []
+    requested_tags = list({*requested_tags, *ai_tags})
+
+    # Expert note nhúng vào prompt (không cho khách thấy nguyên văn)
+    question_for_llm = text
+    if expert_extra_note:
+        question_for_llm = (
+            expert_extra_note.strip()
+            + "\n\nCÂU HỎI GỐC CỦA NGƯỜI DÙNG:\n"
+            + text
+        )
 
     meta = {
         "intent": intent,
@@ -1071,6 +1135,7 @@ def handle_chat(
         "ai_body_system": analysis.get("body_system", ""),
         "ai_severity": analysis.get("severity", ""),
         "ai_groups": ai_groups,
+        "ai_tags": ai_tags,
     }
 
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
@@ -1109,7 +1174,9 @@ def handle_chat(
         meta["selected_combos"] = [c.get("id") for c in combos]
 
         if combos:
-            reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags, extra_instruction)
+            reply = llm_answer_for_combos(
+                question_for_llm, requested_tags, combos, covered_tags
+            )
             if return_meta:
                 return reply, meta
             return reply
@@ -1121,7 +1188,9 @@ def handle_chat(
         meta["selected_products"] = [p.get("id") for p in products]
 
         if products:
-            reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
+            reply = llm_answer_for_products(
+                question_for_llm, requested_tags, products
+            )
             if return_meta:
                 return reply, meta
             return reply
@@ -1132,7 +1201,9 @@ def handle_chat(
         if (not products) and ai_groups:
             products = search_products_by_groups(ai_groups)
         meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
+        reply = llm_answer_for_products(
+            question_for_llm, requested_tags, products
+        )
         if return_meta:
             return reply, meta
         return reply
@@ -1141,7 +1212,9 @@ def handle_chat(
     combos, covered_tags = select_combos_for_tags(requested_tags, text)
     if combos:
         meta["selected_combos"] = [c.get("id") for c in combos]
-        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags, extra_instruction)
+        reply = llm_answer_for_combos(
+            question_for_llm, requested_tags, combos, covered_tags
+        )
         if return_meta:
             return reply, meta
         return reply
@@ -1151,7 +1224,9 @@ def handle_chat(
         products = search_products_by_groups(ai_groups)
     if products:
         meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
+        reply = llm_answer_for_products(
+            question_for_llm, requested_tags, products
+        )
         if return_meta:
             return reply, meta
         return reply
@@ -1164,6 +1239,7 @@ def handle_chat(
     if return_meta:
         return reply, meta
     return reply
+
 
 # =====================================================================
 #   API /openai-chat – LOG DB + NHỚ CÂU CŨ + NGỮ CẢNH
@@ -1207,6 +1283,7 @@ def openai_chat():
             save_message(session_id, "user", user_message)
         except Exception as e:
             print("[DB ERROR] Cannot save user message:", e)
+            print(traceback.format_exc())
 
         # 3) Lấy history sau khi đã lưu, để follow-up hiểu được cả câu vừa hỏi
         history = []
@@ -1214,6 +1291,7 @@ def openai_chat():
             history = get_recent_history(session_id, limit=10)
         except Exception as e:
             print("[DB ERROR] Cannot get history:", e)
+            print(traceback.format_exc())
 
         # 4) Xử lý chat – dùng message_for_ai (đã xử lý 'trả lời lại câu hỏi trên')
         reply_text, meta = handle_chat(
@@ -1229,44 +1307,49 @@ def openai_chat():
             save_message(session_id, "assistant", reply_text)
         except Exception as e:
             print("[DB ERROR] Cannot save bot reply:", e)
+            print(traceback.format_exc())
 
         latency_ms = int((time.time() - start_time) * 1000)
 
         # 6) Gửi log sang Google Sheets (webhook Apps Script)
-        log_payload = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "channel": channel,
-            "session_id": session_id,
-            "user_id": user_id,
-            "user_message": user_message,
-            "message_for_ai": message_for_ai,
-            "used_history_message": used_history_message,
-            "bot_reply": reply_text,
-            "intent": meta.get("intent", ""),
-            "mode_detected": meta.get("mode_detected"),
-            "health_tags": meta.get("health_tags", []),
-            "selected_combos": meta.get("selected_combos", []),
-            "selected_products": meta.get("selected_products", []),
-            "ai_main_issue": meta.get("ai_main_issue", ""),
-            "ai_body_system": meta.get("ai_body_system", ""),
-            "ai_severity": meta.get("ai_severity", ""),
-            "ai_groups": meta.get("ai_groups", []),
-            "latency_ms": latency_ms,
-        }
-
-        log_conversation(log_payload)
+        try:
+            log_payload = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "channel": channel,
+                "session_id": session_id,
+                "user_id": user_id,
+                "user_message": user_message,
+                "message_for_ai": message_for_ai,
+                "used_history_message": used_history_message,
+                "bot_reply": reply_text,
+                "intent": meta.get("intent", ""),
+                "mode_detected": meta.get("mode_detected"),
+                "health_tags": meta.get("health_tags", []),
+                "selected_combos": meta.get("selected_combos", []),
+                "selected_products": meta.get("selected_products", []),
+                "analysis_main_issue": meta.get("ai_main_issue", ""),
+                "analysis_body_system": meta.get("ai_body_system", ""),
+                "analysis_severity": meta.get("ai_severity", ""),
+                "analysis_groups": meta.get("ai_groups", []),
+                "analysis_tags": meta.get("ai_tags", []),
+                "latency_ms": latency_ms,
+            }
+            log_conversation(log_payload)
+        except Exception as e:
+            print("[WARN] log_conversation error:", e)
+            print(traceback.format_exc())
 
         return jsonify({"reply": reply_text})
 
     except Exception as e:
-        import traceback
         print("❌ ERROR /openai-chat:", e)
         print(traceback.format_exc())
-            return jsonify(
+        return jsonify(
             {
                 "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."
             }
         ), 500
+
 
 # =====================================================================
 #   AUTH – ĐĂNG KÝ TVV TỪ TRANG INDEX
@@ -1309,7 +1392,7 @@ def auth_register():
             company_name=company_name,
         )
 
-        # Log sang Google Sheets nếu ông chủ muốn theo dõi đăng ký
+        # Log sang Google Sheets nếu cần theo dõi đăng ký
         try:
             log_conversation(
                 {
@@ -1326,11 +1409,17 @@ def auth_register():
                     "health_tags": [],
                     "selected_combos": [],
                     "selected_products": [],
+                    "analysis_main_issue": "",
+                    "analysis_body_system": "",
+                    "analysis_severity": "",
+                    "analysis_groups": [],
+                    "analysis_tags": [],
                     "latency_ms": 0,
                 }
             )
         except Exception as e:
             print("[WARN] log register error:", e)
+            print(traceback.format_exc())
 
         return jsonify(
             {
@@ -1341,7 +1430,10 @@ def auth_register():
 
     except Exception as e:
         print("❌ ERROR /auth/register:", e)
+        print(traceback.format_exc())
         return jsonify({"error": "Lỗi hệ thống khi đăng ký TVV."}), 500
+
+
 # =====================================================================
 #   ADMIN – XEM DANH SÁCH TVV (HỒ SƠ TƯ VẤN VIÊN)
 # =====================================================================
@@ -1372,6 +1464,7 @@ def admin_list_users():
         return jsonify({"items": items})
     except Exception as e:
         print("❌ ERROR /admin/users:", e)
+        print(traceback.format_exc())
         return jsonify({"error": "Không lấy được danh sách TVV."}), 500
 
 
@@ -1385,7 +1478,10 @@ def debug_db():
         conn.close()
         return f"DB OK, time = {now}", 200
     except Exception as e:
+        print("❌ DB ERROR:", e)
+        print(traceback.format_exc())
         return f"DB ERROR: {e}", 500
+
 
 # =====================================================================
 #   HEALTHCHECK
@@ -1397,6 +1493,3 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
-
-
