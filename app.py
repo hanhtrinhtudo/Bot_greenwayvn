@@ -602,8 +602,7 @@ Nhiệm vụ:
 # =====================================================================
 #   LLM PROMPTS
 # =====================================================================
-def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags,
-                          extra_instruction: str = ""):
+def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
     if not combos:
         return (
             "Hiện em chưa tìm thấy combo phù hợp trong dữ liệu cho trường hợp này. "
@@ -626,65 +625,37 @@ Dữ liệu các combo đã được hệ thống chọn (JSON):
 
 {combos_json}
 
-Hướng dẫn bổ sung từ hệ thống (có thể để trống):
-{extra_instruction}
+YÊU CẦU RẤT QUAN TRỌNG:
 
-YÊU CẦU TRẢ LỜI (bằng tiếng Việt, dễ hiểu, rõ ràng):
+1. Đọc kỹ câu hỏi, nếu người dùng hỏi NHIỀU Ý (ví dụ: nên dùng combo hay sản phẩm lẻ, loại nào tốt hơn, dùng bao lâu, giá thế nào, ưu tiên giải pháp nào trước...)
+   thì trước khi trả lời hãy tự xác định và LIỆT KÊ NGẮN GỌN các ý chính họ đang hỏi, dạng:
+   - Ý 1: ...
+   - Ý 2: ...
+   - Ý 3: ...
+   (phần này để tư vấn viên thấy là bạn hiểu đầy đủ câu hỏi).
 
-1. Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và định hướng xử lý (theo combo) cho khách.
-2. Với từng combo:
-   - Nêu rõ combo này hỗ trợ những vấn đề nào trong các vấn đề khách đang gặp.
-   - Liệt kê từng sản phẩm trong combo:
-     + Tên sản phẩm
-     + Lợi ích chính / tác dụng hỗ trợ
-     + Thời gian dùng gợi ý (nếu có trong dữ liệu)
-     + Cách dùng tóm tắt (dựa trên dose_text/usage_text nếu có)
-     + Giá (price_text)
-     + Link sản phẩm (product_url)
-3. Nếu vấn đề có vẻ nặng/nhạy cảm (ung thư, tim mạch nặng, suy thận, v.v.) hãy khuyến nghị khách nên thăm khám và tái khám định kỳ.
-4. Cuối câu trả lời, luôn nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.".
-5. Viết giọng điệu gần gũi, lịch sự, hướng dẫn như đang nói chuyện với tư vấn viên/khách hàng thật.
-"""
-    return call_openai_responses(prompt)
+2. Sau đó TRẢ LỜI TUẦN TỰ TỪNG Ý, không được bỏ sót ý nào.
+   Nếu trong câu hỏi có lựa chọn A/B (ví dụ: "dùng sản phẩm hay combo thì tốt hơn", "nếu là sản phẩm thì sản phẩm gì, nếu là combo thì combo nào"):
+   - Hãy đưa ra KHUYẾN NGHỊ CHÍNH (ví dụ ưu tiên combo vì ...).
+   - Đồng thời nêu luôn PHƯƠNG ÁN THAY THẾ (ví dụ nếu khách chỉ đủ khả năng dùng sản phẩm lẻ thì chọn sản phẩm nào, dùng thế nào).
 
+3. Phần tư vấn chính:
+   - Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và logic chuyên môn (tại sao ưu tiên xử lý nhóm cơ quan nào trước, ví dụ: thận – tiết niệu, tiêu hóa, gan,...).
+   - Với từng combo:
+     + Nêu rõ combo này hỗ trợ những vấn đề nào trong các vấn đề khách đang gặp.
+     + Liệt kê từng sản phẩm trong combo:
+       * Tên sản phẩm
+       * Lợi ích chính / tác dụng hỗ trợ
+       * Thời gian dùng gợi ý (nếu có trong dữ liệu)
+       * Cách dùng tóm tắt (dựa trên dose_text/usage_text nếu có)
+       * Giá (price_text)
+       * Link sản phẩm (product_url)
 
-def llm_answer_for_products(user_question, requested_tags, products,
-                            extra_instruction: str = ""):
-    if not products:
-        return (
-            "Hiện em chưa tìm thấy sản phẩm phù hợp trong dữ liệu cho trường hợp này. "
-            f"Anh/chị vui lòng liên hệ hotline {HOTLINE} để được tư vấn rõ hơn ạ."
-        )
+4. Nếu vấn đề có vẻ nặng/nhạy cảm (ung thư, tim mạch nặng, suy thận, v.v.) hãy khuyến nghị khách nên thăm khám và tái khám định kỳ.
 
-    products_json = json.dumps(products, ensure_ascii=False, indent=2)
-    tags_text = ", ".join(requested_tags)
+5. Cuối câu trả lời, luôn nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.".
 
-    prompt = f"""
-Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
-Bạn chỉ được dùng đúng dữ liệu sản phẩm trong JSON bên dưới, không được bịa thêm sản phẩm hay công dụng.
-
-- Câu hỏi: "{user_question}"
-- Các tags/vấn đề sức khỏe: {tags_text}
-
-Dữ liệu các sản phẩm đã được hệ thống chọn (JSON):
-
-{products_json}
-
-Hướng dẫn bổ sung từ hệ thống (có thể để trống):
-{extra_instruction}
-
-YÊU CẦU TRẢ LỜI:
-
-1. Mở đầu 1–2 câu: giới thiệu đây là các sản phẩm hỗ trợ phù hợp với vấn đề mà khách đang gặp.
-2. Với từng sản phẩm:
-   - Tên sản phẩm
-   - Vấn đề chính mà sản phẩm hỗ trợ (dựa trên group/health_tags)
-   - Lợi ích chính (dựa trên benefits_text hoặc mô tả)
-   - Cách dùng tóm tắt (usage_text hoặc dose_text nếu có)
-   - Giá (price_text)
-   - Link sản phẩm (product_url)
-3. Cuối cùng nhắc: sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.
-4. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
+6. Viết giọng điệu gần gũi, lịch sự, như đang nói chuyện với tư vấn viên/khách hàng thật.
 """
     return call_openai_responses(prompt)
 
@@ -710,34 +681,45 @@ Dữ liệu các sản phẩm đã được hệ thống chọn (JSON):
 
 {products_json}
 
-YÊU CẦU TRẢ LỜI:
+YÊU CẦU RẤT QUAN TRỌNG:
 
-1. Mở đầu 1–2 câu: giới thiệu đây là các sản phẩm hỗ trợ phù hợp với vấn đề mà khách đang gặp.
-2. Với từng sản phẩm:
-   - Tên sản phẩm
-   - Vấn đề chính mà sản phẩm hỗ trợ (dựa trên group/health_tags)
-   - Lợi ích chính (dựa trên benefits_text hoặc mô tả)
-   - Cách dùng tóm tắt (usage_text hoặc dose_text nếu có)
-   - Giá (price_text)
-   - Link sản phẩm (product_url)
-3. Cuối cùng nhắc: sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.
-4. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
+1. Đọc kỹ câu hỏi, nếu người dùng hỏi NHIỀU Ý (ví dụ: hỏi về công dụng, cách dùng, thời gian dùng, giá, so sánh giữa các sản phẩm...)
+   thì hãy LIỆT KÊ NGẮN GỌN lại các ý chính, dạng:
+   - Ý 1: ...
+   - Ý 2: ...
+   - Ý 3: ...
+
+2. Sau đó trả lời lần lượt theo từng ý, không được bỏ sót ý nào.
+   Nếu câu hỏi có dạng lựa chọn A/B (sản phẩm này hay sản phẩm kia tốt hơn):
+   - Nêu rõ sản phẩm nào NÊN ƯU TIÊN và vì sao.
+   - Đưa thêm phương án dự phòng nếu khách không dùng được sản phẩm ưu tiên.
+
+3. Phần tư vấn chi tiết:
+   - Mở đầu 1–2 câu: giới thiệu đây là các sản phẩm hỗ trợ phù hợp với vấn đề mà khách đang gặp.
+   - Với từng sản phẩm:
+     * Tên sản phẩm
+     * Vấn đề chính mà sản phẩm hỗ trợ (dựa trên group/health_tags)
+     * Lợi ích chính (dựa trên benefits_text hoặc mô tả)
+     * Cách dùng tóm tắt (usage_text hoặc dose_text nếu có)
+     * Giá (price_text)
+     * Link sản phẩm (product_url)
+
+4. Cuối cùng nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
+
+5. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
 """
     return call_openai_responses(prompt)
-
 
 def llm_answer_with_history(latest_question: str, history: list) -> str:
     """
     Dùng khi câu hỏi là follow-up: tận dụng transcript hội thoại gần đây.
     """
     if not history:
-        # fallback cho chắc
         return call_openai_responses(
             f"Khách hỏi: {latest_question}\nHãy tư vấn như trợ lý Greenway/Welllab."
         )
 
     lines = []
-    # Lấy khoảng 10 message gần nhất để tránh prompt quá dài
     for msg in history[-10:]:
         role = msg.get("role")
         prefix = "Khách" if role == "user" else "Trợ lý"
@@ -754,17 +736,23 @@ Dưới đây là đoạn hội thoại gần đây giữa khách và trợ lý 
 
 Câu hỏi mới nhất của khách là: "{latest_question}"
 
-NHIỆM VỤ:
+YÊU CẦU:
 
 1. Hiểu 'combo trên', 'combo đó', 'sản phẩm trên', 'sản phẩm đó', 'gói trên'...
    là đang nói về combo/sản phẩm mà bạn vừa tư vấn trước đó trong đoạn hội thoại.
-2. Trả lời ngắn gọn, rõ ràng, dựa trên thông tin đã được tư vấn ở trên
-   (liều dùng, thời gian uống, số viên mỗi ngày, giá, cách dùng...).
-3. Nếu trong đoạn hội thoại chưa có đủ thông tin để trả lời, hãy nói rõ:
-   'Trong phần tư vấn phía trên em chưa ghi rõ phần này, anh/chị cho em xin lại câu hỏi đầy đủ hơn...'
-4. Cuối cùng vẫn nhắc: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh (nếu câu trả lời liên quan đến sản phẩm).
 
-Bắt đầu trả lời bằng tiếng Việt, giọng tư vấn viên thân thiện, chuyên nghiệp.
+2. Đọc kỹ câu hỏi mới. Nếu khách hỏi NHIỀU Ý (ví dụ: vừa hỏi lại liều dùng, vừa hỏi giá, vừa hỏi thời gian dùng...),
+   hãy LIỆT KÊ NGẮN GỌN các ý chính rồi trả lời tuần tự từng ý, không được bỏ sót.
+
+3. Trả lời ngắn gọn, rõ ràng, dựa trên thông tin đã được tư vấn ở trên
+   (liều dùng, thời gian uống, số viên mỗi ngày, giá, cách dùng...).
+   Nếu trong đoạn hội thoại chưa có đủ thông tin để trả lời một ý nào đó, hãy nói rõ:
+   "Trong phần tư vấn phía trên em chưa ghi rõ phần này, anh/chị cho em xin lại câu hỏi đầy đủ hơn..."
+
+4. Nếu câu trả lời liên quan đến sản phẩm, cuối cùng vẫn nhắc:
+   "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
+
+Viết bằng tiếng Việt, giọng tư vấn viên thân thiện, chuyên nghiệp.
 """
     return call_openai_responses(prompt)
 
@@ -1407,3 +1395,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
