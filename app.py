@@ -401,6 +401,23 @@ def search_products_by_tags(requested_tags, limit=5):
 
     return results[:limit]
 
+def search_products_by_groups(groups, limit=5):
+    """
+    Chọn sản phẩm theo group (tieu_hoa, gan, than, ...),
+    dùng khi health_tags không match nhưng AI đã gợi ý nhóm.
+    """
+    group_set = {g for g in (groups or []) if g}
+    if not group_set:
+        return []
+
+    results = []
+    for p in PRODUCTS:
+        g = p.get("group")
+        if g and g in group_set:
+            results.append(p)
+
+    return results[:limit]
+
 # =====================================================================
 #   OPENAI RESPONSES
 # =====================================================================
@@ -509,10 +526,84 @@ Hãy trả về JSON **duy nhất**, không giải thích thêm, dạng:
     data["intent"] = intent
     return data
 
+def ai_analyze_symptom(user_message: str, history_messages: list[dict] | None = None) -> dict:
+    """
+    Phân tích triệu chứng / tình huống sức khỏe ở mức 'chuyên gia'.
+
+    Trả về JSON dạng:
+    {
+      "main_issue": "tiêu hoá / đại tràng / gan mật / ...",
+      "body_system": "digestive | liver | immune | cardio | other",
+      "symptom_keywords": ["đi ngoài nhiều lần", "đau bụng", ...],
+      "severity": "mild | moderate | severe",
+      "recommended_groups": ["tieu_hoa", "dai_trang"],
+      "suggested_tags": ["tieu_hoa", "dai_trang"]
+    }
+    """
+    history_messages = history_messages or []
+    history_text_lines = []
+    for m in history_messages[-6:]:
+        role = m.get("role", "user")
+        content = (m.get("content") or "").replace("\n", " ").strip()
+        if not content:
+            continue
+        prefix = "KHÁCH" if role == "user" else "BOT"
+        history_text_lines.append(f"{prefix}: {content}")
+    history_text = "\n".join(history_text_lines)
+
+    prompt = f"""
+Bạn là module PHÂN TÍCH TRIỆU CHỨNG cho trợ lý sức khỏe Greenway/Welllab.
+
+Nhiệm vụ:
+- ĐỌC và HIỂU mô tả triệu chứng của người dùng (TVV/Leader hoặc khách).
+- SUY LUẬN xem vấn đề chính thuộc nhóm nào, mức độ ra sao.
+- Gợi ý các nhóm sản phẩm NÊN ƯU TIÊN (theo group trong dữ liệu: tieu_hoa, gan, than, tim_mach, mien_dich, xuong_khop,...).
+- Đề xuất thêm các health_tags liên quan (nếu có).
+
+Đầu ra là JSON DUY NHẤT, KHÔNG giải thích thêm, có dạng:
+
+{{
+  "main_issue": "<mô tả ngắn vấn đề chính>",
+  "body_system": "digestive | liver | immune | cardio | neuro | other",
+  "symptom_keywords": ["..."],
+  "severity": "mild | moderate | severe",
+  "recommended_groups": ["tieu_hoa", "dai_trang", "men_vi_sinh"],
+  "suggested_tags": ["tieu_hoa", "dai_trang"]
+}}
+
+----- LỊCH SỬ HỘI THOẠI GẦN ĐÂY (nếu có) -----
+{history_text}
+
+----- CÂU MÔ TẢ TRIỆU CHỨNG / VẤN ĐỀ MỚI NHẤT -----
+"{user_message}"
+"""
+    raw = call_openai_responses(prompt)
+    data = safe_parse_json(
+        raw,
+        default={
+            "main_issue": "",
+            "body_system": "other",
+            "symptom_keywords": [],
+            "severity": "mild",
+            "recommended_groups": [],
+            "suggested_tags": [],
+        },
+    )
+    # Đảm bảo các field tối thiểu tồn tại
+    data.setdefault("main_issue", "")
+    data.setdefault("body_system", "other")
+    data.setdefault("symptom_keywords", [])
+    data.setdefault("severity", "mild")
+    data.setdefault("recommended_groups", [])
+    data.setdefault("suggested_tags", [])
+    return data
+
+
 # =====================================================================
 #   LLM PROMPTS
 # =====================================================================
-def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags):
+def llm_answer_for_combos(user_question, requested_tags, combos, covered_tags,
+                          extra_instruction: str = ""):
     if not combos:
         return (
             "Hiện em chưa tìm thấy combo phù hợp trong dữ liệu cho trường hợp này. "
@@ -535,6 +626,9 @@ Dữ liệu các combo đã được hệ thống chọn (JSON):
 
 {combos_json}
 
+Hướng dẫn bổ sung từ hệ thống (có thể để trống):
+{extra_instruction}
+
 YÊU CẦU TRẢ LỜI (bằng tiếng Việt, dễ hiểu, rõ ràng):
 
 1. Mở đầu 1–3 câu: tóm tắt các vấn đề/nhu cầu chính và định hướng xử lý (theo combo) cho khách.
@@ -550,6 +644,47 @@ YÊU CẦU TRẢ LỜI (bằng tiếng Việt, dễ hiểu, rõ ràng):
 3. Nếu vấn đề có vẻ nặng/nhạy cảm (ung thư, tim mạch nặng, suy thận, v.v.) hãy khuyến nghị khách nên thăm khám và tái khám định kỳ.
 4. Cuối câu trả lời, luôn nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.".
 5. Viết giọng điệu gần gũi, lịch sự, hướng dẫn như đang nói chuyện với tư vấn viên/khách hàng thật.
+"""
+    return call_openai_responses(prompt)
+
+
+def llm_answer_for_products(user_question, requested_tags, products,
+                            extra_instruction: str = ""):
+    if not products:
+        return (
+            "Hiện em chưa tìm thấy sản phẩm phù hợp trong dữ liệu cho trường hợp này. "
+            f"Anh/chị vui lòng liên hệ hotline {HOTLINE} để được tư vấn rõ hơn ạ."
+        )
+
+    products_json = json.dumps(products, ensure_ascii=False, indent=2)
+    tags_text = ", ".join(requested_tags)
+
+    prompt = f"""
+Bạn là trợ lý tư vấn cho công ty thực phẩm chức năng Greenway/Welllab.
+Bạn chỉ được dùng đúng dữ liệu sản phẩm trong JSON bên dưới, không được bịa thêm sản phẩm hay công dụng.
+
+- Câu hỏi: "{user_question}"
+- Các tags/vấn đề sức khỏe: {tags_text}
+
+Dữ liệu các sản phẩm đã được hệ thống chọn (JSON):
+
+{products_json}
+
+Hướng dẫn bổ sung từ hệ thống (có thể để trống):
+{extra_instruction}
+
+YÊU CẦU TRẢ LỜI:
+
+1. Mở đầu 1–2 câu: giới thiệu đây là các sản phẩm hỗ trợ phù hợp với vấn đề mà khách đang gặp.
+2. Với từng sản phẩm:
+   - Tên sản phẩm
+   - Vấn đề chính mà sản phẩm hỗ trợ (dựa trên group/health_tags)
+   - Lợi ích chính (dựa trên benefits_text hoặc mô tả)
+   - Cách dùng tóm tắt (usage_text hoặc dose_text nếu có)
+   - Giá (price_text)
+   - Link sản phẩm (product_url)
+3. Cuối cùng nhắc: sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.
+4. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
 """
     return call_openai_responses(prompt)
 
@@ -763,10 +898,40 @@ def handle_chat(
     # Dùng history được truyền từ /openai-chat cho AI phân loại intent
     history_messages = history
 
-    # Gọi AI phân loại ý định
+    # 1) Gọi AI phân loại ý định
     intent_info = ai_classify_intent(text, history_messages)
     intent = intent_info.get("intent", "other")
     print("[INTENT]", intent, "|", intent_info.get("reason", ""))
+
+    # 2) PHÂN TÍCH TRIỆU CHỨNG Ở TẦNG CHUYÊN GIA
+    analysis = {}
+    ai_tags = []
+    ai_groups = []
+    expert_extra_note = ""
+
+    if intent in ("health_question", "combo_question", "product_question", "other"):
+        analysis = ai_analyze_symptom(text, history_messages)
+        ai_tags = analysis.get("suggested_tags") or []
+        ai_groups = analysis.get("recommended_groups") or []
+
+        expert_extra_note = (
+            "TÓM TẮT PHÂN TÍCH CHUYÊN GIA (không cần in nguyên văn, chỉ dùng để định hướng tư vấn):\n"
+            f"- Vấn đề chính: {analysis.get('main_issue', '')}\n"
+            f"- Hệ cơ quan: {analysis.get('body_system', '')}\n"
+            f"- Mức độ gợi ý: {analysis.get('severity', '')}\n"
+            "Hãy giải thích cho người dùng theo hướng chuyên gia sức khỏe, dễ hiểu, "
+            "trình bày rõ: vấn đề chính là gì, hướng hỗ trợ ưu tiên ra sao, "
+            "sau đó mới đi vào combo/sản phẩm cụ thể.\n"
+        )
+    else:
+        analysis = {
+            "main_issue": "",
+            "body_system": "other",
+            "symptom_keywords": [],
+            "severity": "mild",
+            "recommended_groups": [],
+            "suggested_tags": [],
+        }
 
     # ================== ROUTING THEO INTENT TỰ NHIÊN ==================
     # 1. Chào hỏi
@@ -783,6 +948,10 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return reply, meta
         return reply
@@ -807,6 +976,10 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return smalltalk_reply, meta
         return smalltalk_reply
@@ -821,6 +994,10 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return reply, meta
         return reply
@@ -835,6 +1012,10 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return reply, meta
         return reply
@@ -849,22 +1030,24 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return reply, meta
         return reply
 
-    # 6. Tuning mode cho các câu sức khỏe
-    #    (giữ nguyên pipeline cũ, nhưng ưu tiên intent AI)
+    # 6. Tuning mode cho các câu sức khỏe (ưu tiên intent AI)
     if intent == "combo_question":
         mode = "combo"
     elif intent == "product_question":
         mode = "product"
     elif intent == "health_question":
-        # để auto cho pipeline combo/product tự chọn
         if not mode:
             mode = "auto"
 
-    # Nếu là câu follow-up, dùng luôn lịch sử để trả lời
+    # 7. Follow-up kiểu "combo trên uống bao lâu" → dùng lịch sử
     if history and looks_like_followup(text):
         reply = llm_answer_with_history(text, history)
         if return_meta:
@@ -874,25 +1057,38 @@ def handle_chat(
                 "health_tags": [],
                 "selected_combos": [],
                 "selected_products": [],
+                "ai_main_issue": analysis.get("main_issue", ""),
+                "ai_body_system": analysis.get("body_system", ""),
+                "ai_severity": analysis.get("severity", ""),
+                "ai_groups": ai_groups,
             }
             return reply, meta
         return reply
 
+    # 8. Mode + tags + extra_instruction cho LLM
     detected_mode = detect_mode(text) if not mode else mode.lower().strip()
     mode = detected_mode
 
     requested_tags = extract_tags_from_text(text)
+    requested_tags = list(set((requested_tags or []) + (ai_tags or [])))
+    extra_instruction = expert_extra_note  # riêng tầng chuyên gia A1
+
     meta = {
         "intent": intent,
         "mode_detected": mode,
         "health_tags": requested_tags,
         "selected_combos": [],
         "selected_products": [],
+        "ai_main_issue": analysis.get("main_issue", ""),
+        "ai_body_system": analysis.get("body_system", ""),
+        "ai_severity": analysis.get("severity", ""),
+        "ai_groups": ai_groups,
     }
 
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
+    print("[DEBUG] requested_tags =", requested_tags, "| ai_groups =", ai_groups)
 
-    # Các mode đơn giản
+    # 9. Các mode đơn giản
     if mode == "buy":
         reply = handle_buy_and_payment_info()
         if return_meta:
@@ -911,7 +1107,7 @@ def handle_chat(
             return reply, meta
         return reply
 
-    # Các mode về sức khỏe: combo / product / auto
+    # 10. Các mode về sức khỏe: combo / product / auto
     want_combo = "combo" in strip_accents(text) or mode == "combo"
     want_product = (
         "san pham" in strip_accents(text)
@@ -919,40 +1115,60 @@ def handle_chat(
         or mode == "product"
     )
 
+    # 10.1. Ưu tiên combo nếu người dùng hỏi combo
     if want_combo and not want_product:
         combos, covered_tags = select_combos_for_tags(requested_tags, text)
         meta["selected_combos"] = [c.get("id") for c in combos]
-        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags)
-        if return_meta:
-            return reply, meta
-        return reply
 
+        if combos:
+            reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags, extra_instruction)
+            if return_meta:
+                return reply, meta
+            return reply
+
+        # Không có combo → fallback sang sản phẩm (tags + group chuyên gia)
+        products = search_products_by_tags(requested_tags)
+        if (not products) and ai_groups:
+            products = search_products_by_groups(ai_groups)
+        meta["selected_products"] = [p.get("id") for p in products]
+
+        if products:
+            reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
+            if return_meta:
+                return reply, meta
+            return reply
+
+    # 10.2. Người dùng hỏi sản phẩm
     if want_product and not want_combo:
         products = search_products_by_tags(requested_tags)
+        if (not products) and ai_groups:
+            products = search_products_by_groups(ai_groups)
         meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(text, requested_tags, products)
+        reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
         if return_meta:
             return reply, meta
         return reply
 
-    # AUTO: ưu tiên combo, nếu không có thì show sản phẩm
+    # 10.3. AUTO: ưu tiên combo, nếu không có thì show sản phẩm
     combos, covered_tags = select_combos_for_tags(requested_tags, text)
     if combos:
         meta["selected_combos"] = [c.get("id") for c in combos]
-        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags)
+        reply = llm_answer_for_combos(text, requested_tags, combos, covered_tags, extra_instruction)
         if return_meta:
             return reply, meta
         return reply
 
     products = search_products_by_tags(requested_tags)
+    if (not products) and ai_groups:
+        products = search_products_by_groups(ai_groups)
     if products:
         meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(text, requested_tags, products)
+        reply = llm_answer_for_products(text, requested_tags, products, extra_instruction)
         if return_meta:
             return reply, meta
         return reply
 
-    # Không match gì
+    # 11. Không match được gì
     reply = (
         "Hiện em chưa tìm thấy combo hay sản phẩm nào phù hợp trong dữ liệu cho trường hợp này. "
         f"Anh/chị có thể nói rõ hơn tình trạng sức khỏe, hoặc liên hệ hotline {HOTLINE} để tuyến trên hỗ trợ kỹ hơn ạ."
@@ -1043,8 +1259,13 @@ def openai_chat():
             "health_tags": meta.get("health_tags", []),
             "selected_combos": meta.get("selected_combos", []),
             "selected_products": meta.get("selected_products", []),
+            "ai_main_issue": meta.get("ai_main_issue", ""),
+            "ai_body_system": meta.get("ai_body_system", ""),
+            "ai_severity": meta.get("ai_severity", ""),
+            "ai_groups": meta.get("ai_groups", []),
             "latency_ms": latency_ms,
         }
+
         log_conversation(log_payload)
 
         return jsonify({"reply": reply_text})
