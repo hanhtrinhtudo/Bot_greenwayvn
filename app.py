@@ -548,6 +548,10 @@ NHIỆM VỤ:
 5. "product_question"
    - Hỏi về MỘT sản phẩm cụ thể (đã nêu tên, mã, hoặc mô tả rõ ràng).
    - Quan tâm đến: công dụng, cách dùng, giá, thành phần, có dùng chung được không...
+   - "product_question": hỏi về MỘT sản phẩm cụ thể, 
+  HOẶC hỏi chung về sản phẩm/giá như: 
+  "có sản phẩm nào giá mềm không", 
+  "công ty có sản phẩm dành cho người thu nhập thấp không"...
 
 6. "combo_question"
    - Hỏi GỢI Ý COMBO/BỘ SẢN PHẨM cho một vấn đề sức khỏe.
@@ -816,6 +820,42 @@ YÊU CẦU RẤT QUAN TRỌNG:
 4. Cuối cùng nhắc: "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
 
 5. Viết ngắn gọn, rõ ràng, dễ dùng cho tư vấn viên khi chát với khách.
+"""
+    return call_openai_responses(prompt)
+
+def llm_general_product_chat(user_question: str) -> str:
+    """
+    Trả lời các câu hỏi chung về sản phẩm, phân khúc giá, 
+    kiểu: có sản phẩm cho người thu nhập thấp không, sản phẩm nào kinh tế,...
+    Không dựa vào health_tags, chỉ định hướng và gợi mở.
+    """
+    prompt = f"""
+Bạn là trợ lý AI của công ty thực phẩm chức năng Greenway/Welllab.
+
+Người dùng đang hỏi CHUNG CHUNG về sản phẩm hoặc phân khúc giá, 
+ví dụ như: "có sản phẩm dành cho người nghèo/thu nhập thấp không", 
+nhưng chưa nói rõ tình trạng sức khỏe hay nhu cầu cụ thể.
+
+YÊU CẦU TRẢ LỜI (TIẾNG VIỆT, NGẮN GỌN, DỄ HIỂU):
+
+1. Khẳng định nhẹ nhàng:
+   - Công ty có nhiều dòng sản phẩm với nhiều mức giá khác nhau,
+     có thể sắp xếp được giải pháp phù hợp với khả năng tài chính.
+
+2. Giải thích nguyên tắc:
+   - Quan trọng nhất vẫn là chọn đúng giải pháp cho tình trạng sức khỏe,
+     sau đó tối ưu theo ngân sách (ưu tiên combo nếu có điều kiện,
+     còn nếu kinh phí hạn chế thì chọn 1–2 sản phẩm trọng tâm).
+
+3. Gợi ý rõ ràng cho bước tiếp theo:
+   - Hỏi lại người dùng về: tình trạng sức khỏe đang quan tâm
+     (hoặc vấn đề chính) và khoảng ngân sách dự kiến,
+     để tư vấn cụ thể combo/sản phẩm phù hợp.
+
+4. Không bịa tên thuốc, không hứa hẹn quá mức, 
+   không cần liệt kê tên sản phẩm cụ thể ở đây.
+
+Câu hỏi của người dùng: "{user_question}"
 """
     return call_openai_responses(prompt)
 
@@ -1224,6 +1264,14 @@ Câu của người dùng: "{text}"
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
     print("[DEBUG] requested_tags =", requested_tags, "| ai_groups =", ai_groups)
 
+    # 8.5. Câu hỏi CHUNG về sản phẩm / phân khúc giá
+    # Không có tag sức khỏe, không có nhóm chuyên gia → chỉ nên tư vấn định hướng
+    if intent in ("product_question", "other") and not requested_tags and not ai_groups:
+        reply = llm_general_product_chat(text)
+        if return_meta:
+            return reply, meta
+        return reply
+
     # 9. Các mode đơn giản
     if mode == "buy":
         reply = handle_buy_and_payment_info()
@@ -1576,4 +1624,5 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
