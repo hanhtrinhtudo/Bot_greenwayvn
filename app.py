@@ -5,6 +5,7 @@ import unicodedata
 import traceback
 import random
 from datetime import datetime, timedelta
+from __future__ import annotations
 
 import psycopg2
 from psycopg2.extras import DictCursor
@@ -356,20 +357,19 @@ def charge_tenant_for_smart_request(tenant_id: int, messages: int = 1) -> dict:
 #   HANDLER: HƯỚNG DẪN NẠP TIỀN
 # =====================================================================
 def handle_topup_instruction(brand: BrandSettings | None = None):
-    hotline = HOTLINE
-    if brand and getattr(brand, "hotline", None):
-        hotline = brand.hotline
+    b = brand or BrandSettings()
     return (
-        "Để nạp tiền vào tài khoản sử dụng trợ lý thông minh, anh/chị có thể làm như sau:\n\n"
+        "Để nạp tiền vào tài khoản sử dụng trợ lý thông minh của "
+        f"{b.brand_name}, anh/chị có thể làm như sau:\n\n"
         "1️⃣ Liên hệ tuyến trên hoặc quản trị viên để được cấp thông tin thanh toán (số tài khoản / ví điện tử).\n"
         "2️⃣ Chuyển khoản với nội dung: họ tên + số điện thoại hoặc mã tài khoản (TVV code).\n"
         "3️⃣ Sau khi nhận được tiền, quản trị viên sẽ nạp số dư tương ứng vào hệ thống. "
         "Anh/chị có thể vào trang \"Tài khoản\" để kiểm tra số dư hiện tại.\n\n"
-        "💡 Lưu ý: \n"
-        "- Số dư càng cao thì anh/chị sử dụng trợ lý thông minh càng lâu (hệ thống chỉ trừ tiền khi dùng AI phân tích sâu).\n"
-        "- Khi số dư về 0, Bot tự chuyển sang chế độ cơ bản miễn phí, không phát sinh thêm chi phí.\n"
-        "Nếu anh/chị cần thông tin thanh toán cụ thể, vui lòng liên hệ trực tiếp hotline "
-        f"{HOTLINE} để được hỗ trợ chi tiết ạ."
+        "💡 Lưu ý:\n"
+        "- Số dư càng cao thì anh/chị sử dụng trợ lý thông minh càng lâu "
+        "(hệ thống chỉ trừ tiền khi dùng AI phân tích sâu).\n"
+        "- Khi số dư về 0, Bot tự chuyển sang chế độ cơ bản miễn phí, không phát sinh thêm chi phí.\n\n"
+        f"Nếu anh/chị cần thông tin thanh toán cụ thể, vui lòng liên hệ trực tiếp hotline {b.hotline} để được hỗ trợ chi tiết ạ."
     )
 
 def looks_like_topup_help(text: str) -> bool:
@@ -511,6 +511,26 @@ def get_last_user_message(session_id: str):
             return row["content"] if row else None
     finally:
         conn.close()
+def get_brand_settings_for_tenant(tenant_id: int | None) -> BrandSettings:
+    """
+    Lấy thông tin brand cho 1 tenant từ bảng tenant_settings.
+    Nếu chưa có bản ghi thì trả về default (ENV).
+    """
+    if not tenant_id:
+        return BrandSettings()
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM tenant_settings WHERE tenant_id = %s LIMIT 1",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+        return BrandSettings.from_db(dict(row) if row else None)
+    finally:
+        conn.close()
+
 # =====================================================================
 #   DIALOGFLOW CX – DETECT INTENT
 # =====================================================================
@@ -747,6 +767,9 @@ MULTI_ISSUE_RULES = load_json_file("multi_issue_rules.json", {"rules": []})
 PRODUCTS = PRODUCTS_DATA.get("products", [])
 COMBOS = COMBOS_DATA.get("combos", [])
 
+from dataclasses import dataclass
+from typing import Optional
+
 @dataclass
 class BrandSettings:
     brand_name: str = "Greenway / Welllab"
@@ -757,7 +780,27 @@ class BrandSettings:
     logo_url: str = ""
     primary_color: str = "#0EA5E9"
     secondary_color: str = "#F97316"
+    ai_disclaimer: str = "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
+@classmethod
+    def from_db(cls, row: dict | None) -> "BrandSettings":
+        """
+        Tạo BrandSettings từ bản ghi tenant_settings (nếu có).
+        Nếu thiếu trường nào thì fallback về ENV / default.
+        """
+        if not row:
+            return cls()
 
+        return cls(
+            brand_name=row.get("brand_name") or "Greenway / Welllab",
+            hotline=row.get("hotline") or HOTLINE,
+            fanpage_url=row.get("fanpage_url") or FANPAGE_URL,
+            zalo_oa_url=row.get("zalo_oa_url") or ZALO_OA_URL,
+            website_url=row.get("website_url") or WEBSITE_URL,
+            primary_color=row.get("primary_color") or "#16a34a",
+            secondary_color=row.get("secondary_color") or "#22c55e",
+            ai_disclaimer=row.get("ai_disclaimer") or
+                          "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.",
+        )
 
 @dataclass
 class AISettings:
@@ -770,7 +813,6 @@ class AISettings:
     dfcx_location: str = DFCX_LOCATION
     dfcx_agent_id: str = DFCX_AGENT_ID
     dfcx_language_code: str = DFCX_LANGUAGE_CODE
-
 
 @dataclass
 class CatalogSettings:
@@ -3234,4 +3276,5 @@ def home():
 
 
 if __name__ == "__main__":
+
     app.run(host="0.0.0.0", port=8080)
