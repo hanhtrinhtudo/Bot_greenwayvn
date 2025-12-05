@@ -2823,215 +2823,82 @@ def openai_chat():
 #   AUTH – ĐĂNG KÝ TVV TỪ TRANG INDEX
 # =====================================================================
 @app.route("/auth/register", methods=["POST"])
-def auth_register():
+def register_user():
     """
-    Đăng ký tài khoản dùng thử + tạo tenant mặc định (nếu chưa có).
-
-    Body (từ frontend Next.js):
-    {
-      "full_name": "...",
-      "phone": "...",
-      "email": "...",
-      "company_name": "...",
-      "password": "..."
-    }
-
-    Trả về:
-    {
-      "success": true,
-      "session_token": "...",
-      "user": { ...tvv_users... },
-      "tenant": { ...tenants... }
-    }
+    Đăng ký tài khoản dùng thử + tạo tenant + tạo user + set mật khẩu.
     """
     try:
         body = request.get_json(force=True) or {}
+
         full_name = (body.get("full_name") or "").strip()
         phone = (body.get("phone") or "").strip()
-        email = (body.get("email") or "").strip()
+        email = (body.get("email") or "").strip() or None
         company_name = (body.get("company_name") or "").strip()
         password = (body.get("password") or "").strip()
-        tvv_code = (body.get("tvv_code") or "").strip()
 
-        if not full_name or not phone:
-            return jsonify(
-                {"error": "Họ tên và số điện thoại là bắt buộc."}
-            ), 400
-
-        if not tvv_code:
-            tvv_code = phone
+        if not full_name or not phone or not company_name or not password:
+            return jsonify({"error": "Thiếu thông tin bắt buộc."}), 400
 
         conn = get_db_conn()
-        try:
-            with conn.cursor(cursor_factory=DictCursor) as cur:
-                # 1. Kiểm tra user đã tồn tại chưa
-                cur.execute(
-                    """
-                    SELECT *
-                    FROM tvv_users
-                    WHERE phone = %s OR tvv_code = %s
-                    LIMIT 1
-                    """,
-                    (phone, tvv_code),
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+
+            # 1️⃣ Kiểm tra user đã tồn tại chưa
+            cur.execute(
+                "SELECT id FROM tvv_users WHERE phone = %s LIMIT 1",
+                (phone,)
+            )
+            if cur.fetchone():
+                return jsonify({"error": "Số điện thoại đã tồn tại."}), 400
+
+            # 2️⃣ Tạo tenant mới
+            cur.execute(
+                """
+                INSERT INTO tenants (name, contact_phone, contact_email, status)
+                VALUES (%s, %s, %s, 'active')
+                RETURNING id
+                """,
+                (company_name, phone, email)
+            )
+            tenant_id = cur.fetchone()["id"]
+
+            # 3️⃣ Tạo user mới
+            password_hash = hash_password(password)
+
+            cur.execute(
+                """
+                INSERT INTO tvv_users (
+                    tenant_id, tvv_code, full_name, phone, email,
+                    company_name, password_hash, created_at, updated_at
                 )
-                user = cur.fetchone()
-
-                tenant_id = None
-
-                if user:
-                    tenant_id = user["tenant_id"]
-
-                    # cập nhật thông tin + mật khẩu (nếu có)
-                    password_hash = user.get("password_hash")
-                    if password:
-                        password_hash = hash_password(password)
-
-                    cur.execute(
-                        """
-                        UPDATE tvv_users
-                        SET full_name = %s,
-                            phone = %s,
-                            email = %s,
-                            company_name = %s,
-                            tvv_code = %s,
-                            password_hash = %s
-                        WHERE id = %s
-                        """,
-                        (
-                            full_name,
-                            phone,
-                            email or None,
-                            company_name or None,
-                            tvv_code,
-                            password_hash,
-                            user["id"],
-                        ),
-                    )
-                else:
-                    # 2. Chưa có user → tạo tenant mới + billing + user
-                    cur.execute(
-                        """
-                        INSERT INTO tenants (name, contact_phone, contact_email)
-                        VALUES (%s, %s, %s)
-                        RETURNING id
-                        """,
-                        (company_name or f"Khách hàng {phone}", phone, email or None),
-                    )
-                    tenant_id = cur.fetchone()["id"]
-
-                    # tạo bản ghi billing với số dư 0
-                    cur.execute(
-                        """
-                        INSERT INTO tenant_billing (tenant_id, balance_cents)
-                        VALUES (%s, 0)
-                        ON CONFLICT (tenant_id) DO NOTHING
-                        """,
-                        (tenant_id,),
-                    )
-
-                    password_hash = hash_password(password) if password else None
-
-                    cur.execute(
-                        """
-                        INSERT INTO tvv_users
-                          (tvv_code, full_name, phone, email, company_name, tenant_id, password_hash)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        RETURNING *
-                        """,
-                        (
-                            tvv_code,
-                            full_name,
-                            phone,
-                            email or None,
-                            company_name or None,
-                            tenant_id,
-                            password_hash,
-                        ),
-                    )
-                    user = cur.fetchone()
-
-                # 3. Lấy lại user + tenant để trả về
-                if not user:
-                    cur.execute(
-                        """
-                        SELECT *
-                        FROM tvv_users
-                        WHERE phone = %s OR tvv_code = %s
-                        LIMIT 1
-                        """,
-                        (phone, tvv_code),
-                    )
-                    user = cur.fetchone()
-
-                cur.execute(
-                    "SELECT * FROM tenants WHERE id = %s LIMIT 1",
-                    (user["tenant_id"],),
-                )
-                tenant = cur.fetchone()
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING id
+                """,
+                (tenant_id, phone, full_name, phone, email, company_name, password_hash)
+            )
+            user_id = cur.fetchone()["id"]
 
             conn.commit()
-        finally:
-            conn.close()
 
-        # Tạo session token đơn giản
+        # 4️⃣ Tạo session token
         session_token = f"token-{phone}-{int(time.time())}"
 
-        # Log sang Google Sheets nếu cần
-        try:
-            log_conversation(
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "channel": "web_register",
-                    "session_id": "",
-                    "user_id": tvv_code,
-                    "user_message": f"REGISTER: {full_name} / {phone} / {email}",
-                    "message_for_ai": "",
-                    "used_history_message": "",
-                    "bot_reply": "",
-                    "intent": "register_tvv",
-                    "mode_detected": "",
-                    "health_tags": [],
-                    "selected_combos": [],
-                    "selected_products": [],
-                    "analysis_main_issue": "",
-                    "analysis_body_system": "",
-                    "analysis_severity": "",
-                    "analysis_groups": [],
-                    "analysis_tags": [],
-                    "latency_ms": 0,
-                }
-            )
-        except Exception as e:
-            print("[WARN] log register error:", e)
-            print(traceback.format_exc())
-
-        user_payload = {
-            "tvv_code": user["tvv_code"],
-            "full_name": user["full_name"],
-            "phone": user["phone"],
-            "email": user.get("email"),
-            "company_name": user.get("company_name"),
-            "tenant_id": user.get("tenant_id"),
-        }
-
-        tenant_payload = None
-        if tenant:
-            tenant_payload = {
-                "id": tenant["id"],
-                "name": tenant["name"],
-                "status": tenant["status"],
-                "contact_phone": tenant.get("contact_phone"),
-                "contact_email": tenant.get("contact_email"),
+        return jsonify({
+            "success": True,
+            "session_token": session_token,
+            "user": {
+                "id": user_id,
+                "full_name": full_name,
+                "phone": phone,
+                "email": email,
+                "company_name": company_name,
+                "tenant_id": tenant_id,
+            },
+            "tenant": {
+                "id": tenant_id,
+                "name": company_name,
+                "status": "active"
             }
-
-        return jsonify(
-            {
-                "success": True,
-                "session_token": session_token,
-                "user": user_payload,
-                "tenant": tenant_payload,
-            }
-        )
+        })
 
     except Exception as e:
         print("❌ ERROR /auth/register:", e)
@@ -3690,6 +3557,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
