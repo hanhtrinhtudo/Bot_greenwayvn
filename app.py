@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import os
 import json
 import time
@@ -590,6 +591,18 @@ def get_brand_settings_for_tenant(tenant_id: int | None) -> BrandSettings:
         return BrandSettings.from_db(dict(row) if row else None)
     finally:
         conn.close()
+        
+PASSWORD_SALT = os.getenv("PASSWORD_SALT", "gw-demo-salt")
+
+def hash_password(raw: str) -> str:
+    if not raw:
+        return ""
+    return hashlib.sha256((PASSWORD_SALT + raw).encode("utf-8")).hexdigest()
+
+def check_password(raw: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    return hash_password(raw) == hashed
 
 # =====================================================================
 #   DIALOGFLOW CX – DETECT INTENT
@@ -2812,15 +2825,17 @@ def openai_chat():
 @app.route("/auth/register", methods=["POST"])
 def auth_register():
     """
-    Trang index.html gửi thông tin:
+    Đăng ký tài khoản TVV / khách dùng thử.
+
+    Body:
     {
       "full_name": "...",
       "phone": "...",
       "email": "...",
       "company_name": "...",
-      "tvv_code": "..."   # có thể bỏ trống, server tự dùng phone làm mã
+      "tvv_code": "...",      # optional, mặc định = phone
+      "password": "..."       # optional, để sau này login bằng mật khẩu
     }
-    Trả về: { "tvv_code": "...", "message": "..." }
     """
     try:
         body = request.get_json(force=True) or {}
@@ -2829,25 +2844,107 @@ def auth_register():
         email = (body.get("email") or "").strip()
         company_name = (body.get("company_name") or "").strip()
         tvv_code = (body.get("tvv_code") or "").strip()
+        raw_password = (body.get("password") or "").strip()
 
         if not full_name or not phone:
             return jsonify(
                 {"error": "Họ tên và số điện thoại là bắt buộc."}
             ), 400
 
-        # Nếu không nhập mã TVV, dùng luôn số điện thoại làm mã
         if not tvv_code:
             tvv_code = phone
 
-        upsert_tvv_user(
-            tvv_code=tvv_code,
-            full_name=full_name,
-            phone=phone,
-            email=email,
-            company_name=company_name,
-        )
+        password_hashed = hash_password(raw_password) if raw_password else ""
 
-        # Log sang Google Sheets nếu cần theo dõi đăng ký
+        conn = get_db_conn()
+        try:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                # đã có user này chưa?
+                cur.execute(
+                    "SELECT * FROM tvv_users WHERE phone = %s LIMIT 1",
+                    (phone,),
+                )
+                user = cur.fetchone()
+
+                if user:
+                    tenant_id = user["tenant_id"]
+
+                    # cập nhật thông tin + mật khẩu (nếu gửi lên)
+                    update_fields = [
+                        "full_name = %s",
+                        "email = %s",
+                        "company_name = %s",
+                        "tvv_code = %s",
+                        "updated_at = NOW()",
+                    ]
+                    params = [
+                        full_name,
+                        email,
+                        company_name,
+                        tvv_code,
+                    ]
+
+                    if password_hashed:
+                        update_fields.append("password_hash = %s")
+                        params.append(password_hashed)
+
+                    params.append(user["id"])
+
+                    cur.execute(
+                        f"""
+                        UPDATE tvv_users
+                        SET {", ".join(update_fields)}
+                        WHERE id = %s
+                        """,
+                        params,
+                    )
+
+                else:
+                    # chưa có user → tạo tenant mới + billing + user
+                    tenant_name = company_name or f"Khách hàng {phone}"
+                    cur.execute(
+                        """
+                        INSERT INTO tenants (name, contact_phone, contact_email, status)
+                        VALUES (%s, %s, %s, 'active')
+                        RETURNING id
+                        """,
+                        (tenant_name, phone, email),
+                    )
+                    tenant_id = cur.fetchone()["id"]
+
+                    # khởi tạo số dư 0
+                    cur.execute(
+                        """
+                        INSERT INTO tenant_billing (tenant_id, balance_cents)
+                        VALUES (%s, 0)
+                        """,
+                        (tenant_id,),
+                    )
+
+                    cur.execute(
+                        """
+                        INSERT INTO tvv_users
+                          (tvv_code, full_name, phone, email, company_name, tenant_id, password_hash)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING *
+                        """,
+                        (
+                            tvv_code,
+                            full_name,
+                            phone,
+                            email,
+                            company_name,
+                            tenant_id,
+                            password_hashed,
+                        ),
+                    )
+                    user = cur.fetchone()
+
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Log sang Google Sheets nếu cần
         try:
             log_conversation(
                 {
@@ -2879,6 +2976,7 @@ def auth_register():
         return jsonify(
             {
                 "tvv_code": tvv_code,
+                "tenant_id": user["tenant_id"],
                 "message": "Đăng ký thành công. Leader sẽ kích hoạt gói sử dụng cho tài khoản này.",
             }
         )
@@ -2887,7 +2985,6 @@ def auth_register():
         print("❌ ERROR /auth/register:", e)
         print(traceback.format_exc())
         return jsonify({"error": "Lỗi hệ thống khi đăng ký TVV."}), 500
-
 
 # =====================================================================
 #   ADMIN – XEM DANH SÁCH TVV (HỒ SƠ TƯ VẤN VIÊN)
@@ -3197,6 +3294,79 @@ def verify_otp():
     except Exception as e:
         print("❌ ERROR /auth/verify-otp:", e)
         return jsonify({"error": "Lỗi xác thực OTP."}), 500
+@app.route("/auth/login-password", methods=["POST"])
+def login_password():
+    """
+    Đăng nhập bằng tài khoản + mật khẩu.
+
+    Body:
+    {
+      "username": "0982.... hoặc mã TVV",
+      "password": "...."
+    }
+
+    Trả về: session_token + thông tin user, giống verify_otp.
+    """
+    try:
+        body = request.get_json(force=True) or {}
+        username = (body.get("username") or "").strip()
+        password = (body.get("password") or "").strip()
+
+        if not username or not password:
+            return jsonify({"error": "Thiếu tài khoản hoặc mật khẩu."}), 400
+
+        conn = get_db_conn()
+        try:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM tvv_users
+                    WHERE phone = %s OR tvv_code = %s
+                    LIMIT 1
+                    """,
+                    (username, username),
+                )
+                user = cur.fetchone()
+
+                if not user:
+                    return jsonify({"error": "Tài khoản không tồn tại."}), 400
+
+                if not user.get("password_hash"):
+                    return jsonify(
+                        {
+                            "error": "Tài khoản này chưa thiết lập mật khẩu, vui lòng đăng nhập bằng OTP."
+                        }
+                    ), 400
+
+                if not check_password(password, user["password_hash"]):
+                    return jsonify({"error": "Mật khẩu không chính xác."}), 400
+
+                tenant_id = user["tenant_id"]
+
+            conn.close()
+
+            # Tạo session_token đơn giản (giống verify_otp)
+            session_token = f"token-{username}-{int(time.time())}"
+
+            return jsonify(
+                {
+                    "success": True,
+                    "session_token": session_token,
+                    "user": {
+                        "tvv_code": user["tvv_code"],
+                        "full_name": user["full_name"],
+                        "phone": user["phone"],
+                        "tenant_id": tenant_id,
+                        "company_name": user.get("company_name"),
+                        "email": user.get("email"),
+                    },
+                }
+            )
+    except Exception as e:
+        print("❌ ERROR /auth/login-password:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": "Lỗi hệ thống khi đăng nhập mật khẩu."}), 500
 
 # =====================================================================
 #   API /me – THÔNG TIN CÁ NHÂN + BILLING CỦA USER HIỆN TẠI
@@ -3346,6 +3516,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
