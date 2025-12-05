@@ -772,16 +772,20 @@ from typing import Optional
 
 @dataclass
 class BrandSettings:
+    """
+    Cấu hình thương hiệu & kênh liên hệ cho từng tenant.
+    Nếu không có trong DB thì dùng default từ ENV.
+    """
     brand_name: str = "Greenway / Welllab"
     hotline: str = HOTLINE
     fanpage_url: str = FANPAGE_URL
     zalo_oa_url: str = ZALO_OA_URL
     website_url: str = WEBSITE_URL
-    logo_url: str = ""
-    primary_color: str = "#0EA5E9"
-    secondary_color: str = "#F97316"
+    primary_color: str = "#16a34a"
+    secondary_color: str = "#22c55e"
     ai_disclaimer: str = "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
-@classmethod
+
+    @classmethod
     def from_db(cls, row: dict | None) -> "BrandSettings":
         """
         Tạo BrandSettings từ bản ghi tenant_settings (nếu có).
@@ -3278,3 +3282,4 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
