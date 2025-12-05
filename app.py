@@ -1073,25 +1073,38 @@ def apply_multi_issue_rules(text: str, multi_issue_rules: dict | None = None):
 
     return best_rule
 
-def score_combo_for_tags(combo, requested_tags, combos_meta: dict | None = None):
+def score_combo_for_tags(combo, requested_tags, combos_meta=None, health_cfg=None):
     requested_tags = set(requested_tags)
     combo_tags = set(combo.get("health_tags", []))
     intersection = requested_tags & combo_tags
+    if not intersection:
+        return 0, []
+
+    health_cfg = health_cfg or HEALTH_TAGS_CONFIG
+
     score = 0
 
-    score += 3 * len(intersection)
+    # 1) Điểm theo trọng số tag
+    for tag in intersection:
+        cfg = health_cfg.get(tag, {})
+        w = cfg.get("weight", 1)  # mặc định 1
+        score += 3 * w
 
-    meta_source = combos_meta or COMBOS_META
-    meta = meta_source.get(combo.get("id", ""), {}) if meta_source else {}
+    # 2) Ưu tiên combo core/support
+    meta = (combos_meta or {}).get(combo.get("id", ""), {})
     role = meta.get("role", "core")
     if role == "core":
         score += 2
     elif role == "support":
         score += 1
 
-    if combo_tags and requested_tags:
-        overlap_ratio = len(intersection) / len(requested_tags)
-        score += overlap_ratio
+    # 3) Nếu combo cover HẾT requested_tags → thưởng thêm
+    if requested_tags and intersection == requested_tags:
+        score += 5
+
+    # 4) tỉ lệ phủ
+    overlap_ratio = len(intersection) / len(requested_tags) if requested_tags else 0
+    score += overlap_ratio
 
     return score, list(intersection)
 
@@ -2068,9 +2081,7 @@ def handle_chat(
         smalltalk_prompt = f"""
 {style_block}
 Bạn là trợ lý sức khỏe cho một công ty thực phẩm bảo vệ sức khỏe.
-
 Người dùng đang CHỈ NÓI CHUYỆN ĐỜI THƯỜNG, không yêu cầu tư vấn cụ thể.
-
 Hãy trả lời thân thiện, ngắn gọn (2-4 câu), có thể đùa nhẹ,
 sau đó khéo léo gợi ý rằng nếu họ cần tư vấn về sức khỏe / sản phẩm / combo thì bạn luôn sẵn sàng.
 
@@ -2193,9 +2204,11 @@ Câu của người dùng: "{text}"
     mode = detected_mode
 
     # Tags từ từ điển + tags do AI gợi ý
-    requested_tags = extract_tags_from_text(text, catalogs.health_tags_config) or []
-    requested_tags = list({*requested_tags, *ai_tags})
+    dict_tags = extract_tags_from_text(text) or []
+    ai_tags = analysis.get("suggested_tags") or []
+    ai_groups = analysis.get("recommended_groups") or []
 
+    requested_tags = dict_tags
 
     # Expert note nhúng vào prompt (không cho khách thấy nguyên văn)
     question_for_llm = text
@@ -2823,82 +2836,143 @@ def openai_chat():
 #   AUTH – ĐĂNG KÝ TVV TỪ TRANG INDEX
 # =====================================================================
 @app.route("/auth/register", methods=["POST"])
-def register_user():
+def auth_register():
     """
-    Đăng ký tài khoản dùng thử + tạo tenant + tạo user + set mật khẩu.
+    Đăng ký TVV: tạo user + (nếu cần) tạo tenant trial.
+
+    Body:
+    {
+      "full_name": "...",
+      "phone": "...",
+      "email": "...",
+      "company_name": "...",
+      "password": "..."
+    }
     """
     try:
         body = request.get_json(force=True) or {}
 
         full_name = (body.get("full_name") or "").strip()
         phone = (body.get("phone") or "").strip()
-        email = (body.get("email") or "").strip() or None
+        email = (body.get("email") or "").strip()
         company_name = (body.get("company_name") or "").strip()
         password = (body.get("password") or "").strip()
 
-        if not full_name or not phone or not company_name or not password:
-            return jsonify({"error": "Thiếu thông tin bắt buộc."}), 400
+        if not full_name or not phone or not password:
+            return jsonify(
+                {"error": "Họ tên, số điện thoại và mật khẩu là bắt buộc."}
+            ), 400
+
+        tvv_code = phone  # dùng phone làm mã TVV mặc định
 
         conn = get_db_conn()
-        with conn.cursor(cursor_factory=DictCursor) as cur:
+        try:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                # 1) Lấy hoặc tạo tenant
+                tenant_name = company_name or f"Khách hàng {phone}"
 
-            # 1️⃣ Kiểm tra user đã tồn tại chưa
-            cur.execute(
-                "SELECT id FROM tvv_users WHERE phone = %s LIMIT 1",
-                (phone,)
-            )
-            if cur.fetchone():
-                return jsonify({"error": "Số điện thoại đã tồn tại."}), 400
-
-            # 2️⃣ Tạo tenant mới
-            cur.execute(
-                """
-                INSERT INTO tenants (name, contact_phone, contact_email, status)
-                VALUES (%s, %s, %s, 'active')
-                RETURNING id
-                """,
-                (company_name, phone, email)
-            )
-            tenant_id = cur.fetchone()["id"]
-
-            # 3️⃣ Tạo user mới
-            password_hash = hash_password(password)
-
-            cur.execute(
-                """
-                INSERT INTO tvv_users (
-                    tenant_id, tvv_code, full_name, phone, email,
-                    company_name, password_hash, created_at, updated_at
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM tenants
+                    WHERE contact_phone = %s OR name = %s
+                    LIMIT 1
+                    """,
+                    (phone, tenant_name),
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                RETURNING id
-                """,
-                (tenant_id, phone, full_name, phone, email, company_name, password_hash)
-            )
-            user_id = cur.fetchone()["id"]
+                row = cur.fetchone()
+                if row:
+                    tenant_id = row["id"]
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO tenants (name, contact_phone, status)
+                        VALUES (%s, %s, 'trial')
+                        RETURNING id
+                        """,
+                        (tenant_name, phone),
+                    )
+                    tenant_id = cur.fetchone()["id"]
+
+                # 2) Hash mật khẩu
+                password_hash = hash_password(password)
+
+                # 3) Tạo / cập nhật user
+                cur.execute(
+                    """
+                    INSERT INTO tvv_users (
+                        tvv_code,
+                        full_name,
+                        phone,
+                        email,
+                        company_name,
+                        tenant_id,
+                        is_active,
+                        password_hash
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)
+                    ON CONFLICT (phone) DO UPDATE
+                    SET
+                        full_name      = EXCLUDED.full_name,
+                        email          = EXCLUDED.email,
+                        company_name   = EXCLUDED.company_name,
+                        tenant_id      = EXCLUDED.tenant_id,
+                        is_active      = TRUE,
+                        password_hash  = EXCLUDED.password_hash,
+                        updated_at     = NOW()
+                    RETURNING tvv_code, full_name, phone, email, company_name, tenant_id;
+                    """,
+                    (
+                        tvv_code,
+                        full_name,
+                        phone,
+                        email,
+                        company_name,
+                        tenant_id,
+                        password_hash,
+                    ),
+                )
+                user = cur.fetchone()
 
             conn.commit()
+        finally:
+            conn.close()
 
-        # 4️⃣ Tạo session token
-        session_token = f"token-{phone}-{int(time.time())}"
+        # (Không bắt buộc) – log sang Google Sheet
+        try:
+            log_conversation(
+                {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "channel": "web_register",
+                    "session_id": "",
+                    "user_id": user["tvv_code"],
+                    "user_message": f"REGISTER_PASSWORD: {full_name} / {phone} / {email}",
+                    "message_for_ai": "",
+                    "used_history_message": "",
+                    "bot_reply": "",
+                    "intent": "register_tvv",
+                    "mode_detected": "",
+                    "health_tags": [],
+                    "selected_combos": [],
+                    "selected_products": [],
+                    "analysis_main_issue": "",
+                    "analysis_body_system": "",
+                    "analysis_severity": "",
+                    "analysis_groups": [],
+                    "analysis_tags": [],
+                    "latency_ms": 0,
+                }
+            )
+        except Exception as log_err:
+            print("[WARN] log register error:", log_err)
+            print(traceback.format_exc())
 
-        return jsonify({
-            "success": True,
-            "session_token": session_token,
-            "user": {
-                "id": user_id,
-                "full_name": full_name,
-                "phone": phone,
-                "email": email,
-                "company_name": company_name,
-                "tenant_id": tenant_id,
-            },
-            "tenant": {
-                "id": tenant_id,
-                "name": company_name,
-                "status": "active"
+        return jsonify(
+            {
+                "tvv_code": user["tvv_code"],
+                "message": "Đăng ký thành công. Leader sẽ kích hoạt gói sử dụng cho tài khoản này.",
             }
-        })
+        )
 
     except Exception as e:
         print("❌ ERROR /auth/register:", e)
@@ -3557,6 +3631,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
