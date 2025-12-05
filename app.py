@@ -2825,16 +2825,23 @@ def openai_chat():
 @app.route("/auth/register", methods=["POST"])
 def auth_register():
     """
-    Đăng ký tài khoản TVV / khách dùng thử.
+    Đăng ký tài khoản dùng thử + tạo tenant mặc định (nếu chưa có).
 
-    Body:
+    Body (từ frontend Next.js):
     {
       "full_name": "...",
       "phone": "...",
       "email": "...",
       "company_name": "...",
-      "tvv_code": "...",      # optional, mặc định = phone
-      "password": "..."       # optional, để sau này login bằng mật khẩu
+      "password": "..."
+    }
+
+    Trả về:
+    {
+      "success": true,
+      "session_token": "...",
+      "user": { ...tvv_users... },
+      "tenant": { ...tenants... }
     }
     """
     try:
@@ -2843,8 +2850,8 @@ def auth_register():
         phone = (body.get("phone") or "").strip()
         email = (body.get("email") or "").strip()
         company_name = (body.get("company_name") or "").strip()
+        password = (body.get("password") or "").strip()
         tvv_code = (body.get("tvv_code") or "").strip()
-        raw_password = (body.get("password") or "").strip()
 
         if not full_name or not phone:
             return jsonify(
@@ -2854,72 +2861,75 @@ def auth_register():
         if not tvv_code:
             tvv_code = phone
 
-        password_hashed = hash_password(raw_password) if raw_password else ""
-
         conn = get_db_conn()
         try:
             with conn.cursor(cursor_factory=DictCursor) as cur:
-                # đã có user này chưa?
+                # 1. Kiểm tra user đã tồn tại chưa
                 cur.execute(
-                    "SELECT * FROM tvv_users WHERE phone = %s LIMIT 1",
-                    (phone,),
+                    """
+                    SELECT *
+                    FROM tvv_users
+                    WHERE phone = %s OR tvv_code = %s
+                    LIMIT 1
+                    """,
+                    (phone, tvv_code),
                 )
                 user = cur.fetchone()
+
+                tenant_id = None
 
                 if user:
                     tenant_id = user["tenant_id"]
 
-                    # cập nhật thông tin + mật khẩu (nếu gửi lên)
-                    update_fields = [
-                        "full_name = %s",
-                        "email = %s",
-                        "company_name = %s",
-                        "tvv_code = %s",
-                        "updated_at = NOW()",
-                    ]
-                    params = [
-                        full_name,
-                        email,
-                        company_name,
-                        tvv_code,
-                    ]
+                    # cập nhật thông tin + mật khẩu (nếu có)
+                    password_hash = user.get("password_hash")
+                    if password:
+                        password_hash = hash_password(password)
 
-                    if password_hashed:
-                        update_fields.append("password_hash = %s")
-                        params.append(password_hashed)
-
-                    params.append(user["id"])
-
-                    cur.execute(
-                        f"""
-                        UPDATE tvv_users
-                        SET {", ".join(update_fields)}
-                        WHERE id = %s
-                        """,
-                        params,
-                    )
-
-                else:
-                    # chưa có user → tạo tenant mới + billing + user
-                    tenant_name = company_name or f"Khách hàng {phone}"
                     cur.execute(
                         """
-                        INSERT INTO tenants (name, contact_phone, contact_email, status)
-                        VALUES (%s, %s, %s, 'active')
+                        UPDATE tvv_users
+                        SET full_name = %s,
+                            phone = %s,
+                            email = %s,
+                            company_name = %s,
+                            tvv_code = %s,
+                            password_hash = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            full_name,
+                            phone,
+                            email or None,
+                            company_name or None,
+                            tvv_code,
+                            password_hash,
+                            user["id"],
+                        ),
+                    )
+                else:
+                    # 2. Chưa có user → tạo tenant mới + billing + user
+                    cur.execute(
+                        """
+                        INSERT INTO tenants (name, contact_phone, contact_email)
+                        VALUES (%s, %s, %s)
                         RETURNING id
                         """,
-                        (tenant_name, phone, email),
+                        (company_name or f"Khách hàng {phone}", phone, email or None),
                     )
                     tenant_id = cur.fetchone()["id"]
 
-                    # khởi tạo số dư 0
+                    # tạo bản ghi billing với số dư 0
                     cur.execute(
                         """
                         INSERT INTO tenant_billing (tenant_id, balance_cents)
                         VALUES (%s, 0)
+                        ON CONFLICT (tenant_id) DO NOTHING
                         """,
                         (tenant_id,),
                     )
+
+                    password_hash = hash_password(password) if password else None
 
                     cur.execute(
                         """
@@ -2932,17 +2942,39 @@ def auth_register():
                             tvv_code,
                             full_name,
                             phone,
-                            email,
-                            company_name,
+                            email or None,
+                            company_name or None,
                             tenant_id,
-                            password_hashed,
+                            password_hash,
                         ),
                     )
                     user = cur.fetchone()
 
+                # 3. Lấy lại user + tenant để trả về
+                if not user:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM tvv_users
+                        WHERE phone = %s OR tvv_code = %s
+                        LIMIT 1
+                        """,
+                        (phone, tvv_code),
+                    )
+                    user = cur.fetchone()
+
+                cur.execute(
+                    "SELECT * FROM tenants WHERE id = %s LIMIT 1",
+                    (user["tenant_id"],),
+                )
+                tenant = cur.fetchone()
+
             conn.commit()
         finally:
             conn.close()
+
+        # Tạo session token đơn giản
+        session_token = f"token-{phone}-{int(time.time())}"
 
         # Log sang Google Sheets nếu cần
         try:
@@ -2973,11 +3005,31 @@ def auth_register():
             print("[WARN] log register error:", e)
             print(traceback.format_exc())
 
+        user_payload = {
+            "tvv_code": user["tvv_code"],
+            "full_name": user["full_name"],
+            "phone": user["phone"],
+            "email": user.get("email"),
+            "company_name": user.get("company_name"),
+            "tenant_id": user.get("tenant_id"),
+        }
+
+        tenant_payload = None
+        if tenant:
+            tenant_payload = {
+                "id": tenant["id"],
+                "name": tenant["name"],
+                "status": tenant["status"],
+                "contact_phone": tenant.get("contact_phone"),
+                "contact_email": tenant.get("contact_email"),
+            }
+
         return jsonify(
             {
-                "tvv_code": tvv_code,
-                "tenant_id": user["tenant_id"],
-                "message": "Đăng ký thành công. Leader sẽ kích hoạt gói sử dụng cho tài khoản này.",
+                "success": True,
+                "session_token": session_token,
+                "user": user_payload,
+                "tenant": tenant_payload,
             }
         )
 
@@ -3295,6 +3347,124 @@ def verify_otp():
         print("❌ ERROR /auth/verify-otp:", e)
         return jsonify({"error": "Lỗi xác thực OTP."}), 500
 
+        
+@app.route("/auth/request-reset-password", methods=["POST"])
+def request_reset_password():
+    """
+    Gửi OTP để đặt lại mật khẩu.
+    Sử dụng bảng otp_codes với purpose = 'reset_password'.
+    """
+    try:
+        body = request.get_json(force=True) or {}
+        phone = (body.get("phone") or "").strip()
+
+        if not phone:
+            return jsonify({"error": "Vui lòng nhập số điện thoại."}), 400
+
+        conn = get_db_conn()
+        try:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                # kiểm tra user tồn tại
+                cur.execute(
+                    "SELECT id FROM tvv_users WHERE phone = %s LIMIT 1",
+                    (phone,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return jsonify({"error": "Số điện thoại này chưa đăng ký tài khoản."}), 400
+
+                otp = str(random.randint(100000, 999999))
+                expires = datetime.utcnow() + timedelta(minutes=10)
+
+                cur.execute(
+                    """
+                    INSERT INTO otp_codes (phone, code, purpose, expires_at)
+                    VALUES (%s, %s, 'reset_password', %s)
+                    """,
+                    (phone, otp, expires),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+
+        msg = f"Ma OTP dat lai mat khau cua ban la: {otp}. Hieu luc 10 phut."
+        send_sms_viettel(phone, msg)
+
+        return jsonify({"success": True, "message": "Đã gửi OTP đặt lại mật khẩu."})
+
+    except Exception as e:
+        print("❌ ERROR /auth/request-reset-password:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": "Không thể gửi OTP đặt lại mật khẩu."}), 500
+
+
+@app.route("/auth/reset-password", methods=["POST"])
+def reset_password():
+    """
+    Đặt lại mật khẩu bằng OTP.
+    Body: { "phone": "...", "code": "...", "new_password": "..." }
+    """
+    try:
+        body = request.get_json(force=True) or {}
+        phone = (body.get("phone") or "").strip()
+        code = (body.get("code") or "").strip()
+        new_password = (body.get("new_password") or "").strip()
+
+        if not phone or not code or not new_password:
+            return jsonify({"error": "Thiếu số điện thoại, OTP hoặc mật khẩu mới."}), 400
+
+        conn = get_db_conn()
+        try:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, code, expires_at, is_used
+                    FROM otp_codes
+                    WHERE phone = %s AND purpose = 'reset_password'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (phone,),
+                )
+                row = cur.fetchone()
+
+                if not row:
+                    return jsonify({"error": "OTP không hợp lệ."}), 400
+
+                if row["is_used"]:
+                    return jsonify({"error": "OTP đã được sử dụng."}), 400
+
+                if row["code"] != code:
+                    return jsonify({"error": "OTP không chính xác."}), 400
+
+                if datetime.utcnow() > row["expires_at"]:
+                    return jsonify({"error": "OTP đã hết hạn."}), 400
+
+                # đánh dấu đã dùng
+                cur.execute(
+                    "UPDATE otp_codes SET is_used = TRUE WHERE id = %s",
+                    (row["id"],),
+                )
+
+                # cập nhật mật khẩu
+                new_hash = hash_password(new_password)
+                cur.execute(
+                    "UPDATE tvv_users SET password_hash = %s WHERE phone = %s",
+                    (new_hash, phone),
+                )
+
+                conn.commit()
+        finally:
+            conn.close()
+
+        return jsonify({"success": True, "message": "Đặt lại mật khẩu thành công."})
+
+    except Exception as e:
+        print("❌ ERROR /auth/reset-password:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": "Lỗi hệ thống khi đặt lại mật khẩu."}), 500
+
+
 @app.route("/auth/login-password", methods=["POST"])
 def login_password():
     """
@@ -3520,6 +3690,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
