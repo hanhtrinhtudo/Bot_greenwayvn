@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import json
 import time
@@ -5,7 +6,6 @@ import unicodedata
 import traceback
 import random
 from datetime import datetime, timedelta
-from __future__ import annotations
 
 import psycopg2
 from psycopg2.extras import DictCursor
@@ -3282,4 +3282,5 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
