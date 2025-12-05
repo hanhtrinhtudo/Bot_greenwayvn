@@ -352,6 +352,66 @@ def charge_tenant_for_smart_request(tenant_id: int, messages: int = 1) -> dict:
         "became_zero": old_balance > 0 and new_balance == 0,
         "is_low": new_balance > 0 and new_balance <= LOW_BALANCE_THRESHOLD_CENTS,
     }
+def topup_tenant_balance(tenant_id: int, amount_cents: int, note: str = "") -> dict:
+    """
+    Admin nạp tiền cho tenant:
+    - Cộng thêm amount_cents vào balance_cents.
+    - Ghi log vào bảng tenant_topup_logs.
+    Trả về old_balance_cents, new_balance_cents.
+    """
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # Lấy số dư hiện tại, lock hàng
+            cur.execute(
+                """
+                SELECT balance_cents
+                FROM tenant_billing
+                WHERE tenant_id = %s
+                FOR UPDATE
+                """,
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                old_balance = 0
+                cur.execute(
+                    """
+                    INSERT INTO tenant_billing (tenant_id, balance_cents, updated_at)
+                    VALUES (%s, 0, NOW())
+                    """,
+                    (tenant_id,),
+                )
+            else:
+                old_balance = row["balance_cents"] or 0
+
+            new_balance = old_balance + amount_cents
+
+            cur.execute(
+                """
+                UPDATE tenant_billing
+                SET balance_cents = %s, updated_at = NOW()
+                WHERE tenant_id = %s
+                """,
+                (new_balance, tenant_id),
+            )
+
+            # Ghi log nạp tiền
+            cur.execute(
+                """
+                INSERT INTO tenant_topup_logs (tenant_id, amount_cents, note, created_at)
+                VALUES (%s, %s, %s, NOW())
+                """,
+                (tenant_id, amount_cents, note),
+            )
+
+        conn.commit()
+        return {
+            "old_balance_cents": old_balance,
+            "new_balance_cents": new_balance,
+        }
+    finally:
+        conn.close()
 
 # =====================================================================
 #   HANDLER: HƯỚNG DẪN NẠP TIỀN
@@ -633,7 +693,7 @@ def call_dialogflow_cx(session_id: str, text: str, language_code: str | None = N
 # =====================================================================
 #   RULE: QUYẾT ĐỊNH ROUTE SANG DIALOGFLOW CX
 # =====================================================================
-def should_route_to_cx(intent: str, user_message: str) -> bool:
+def should_route_to_cx(intent: str, user_message: str, ai_settings: AISettings | None = None) -> bool:
     """
     Quy tắc đơn giản:
     - Chỉ route nếu DFCX_ENABLED = 1.
@@ -781,6 +841,7 @@ class BrandSettings:
     fanpage_url: str = FANPAGE_URL
     zalo_oa_url: str = ZALO_OA_URL
     website_url: str = WEBSITE_URL
+    logo_url: str = ""          # 👈 thêm field này
     primary_color: str = "#16a34a"
     secondary_color: str = "#22c55e"
     ai_disclaimer: str = "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
@@ -800,10 +861,11 @@ class BrandSettings:
             fanpage_url=row.get("fanpage_url") or FANPAGE_URL,
             zalo_oa_url=row.get("zalo_oa_url") or ZALO_OA_URL,
             website_url=row.get("website_url") or WEBSITE_URL,
+            logo_url=row.get("logo_url") or "",
             primary_color=row.get("primary_color") or "#16a34a",
             secondary_color=row.get("secondary_color") or "#22c55e",
-            ai_disclaimer=row.get("ai_disclaimer") or
-                          "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.",
+            ai_disclaimer=row.get("ai_disclaimer")
+            or "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh.",
         )
 
 @dataclass
@@ -827,7 +889,6 @@ class CatalogSettings:
     combos_meta: Dict[str, Any] = field(default_factory=dict)
     multi_issue_rules: Dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class TenantConfig:
     tenant_id: Optional[int]
@@ -839,7 +900,6 @@ def _json_or_default(value, default):
     if value is None:
         return default
     return value
-
 
 def load_tenant_config(tenant_id: Optional[int]) -> TenantConfig:
     """
@@ -980,7 +1040,6 @@ def extract_tags_from_text(text: str, health_tags_config: dict | None = None):
                 break
     return list(found)
 
-
 def apply_multi_issue_rules(text: str, multi_issue_rules: dict | None = None):
     text_norm = strip_accents(text)
     best_rule = None
@@ -1000,7 +1059,6 @@ def apply_multi_issue_rules(text: str, multi_issue_rules: dict | None = None):
             best_rule = rule
 
     return best_rule
-
 
 def score_combo_for_tags(combo, requested_tags, combos_meta: dict | None = None):
     requested_tags = set(requested_tags)
@@ -1023,7 +1081,6 @@ def score_combo_for_tags(combo, requested_tags, combos_meta: dict | None = None)
         score += overlap_ratio
 
     return score, list(intersection)
-
 
 def select_combos_for_tags(requested_tags, user_text, catalogs: CatalogSettings | None = None):
     """
@@ -1148,7 +1205,6 @@ def call_openai_responses(prompt_text: str, model: str | None = None) -> str:
         "hoặc liên hệ hotline để tuyến trên hỗ trợ trực tiếp."
     )
 
-
 def safe_parse_json(text: str, default=None):
     """Cố gắng bóc JSON từ câu trả lời của model."""
     if default is None:
@@ -1240,7 +1296,6 @@ NHIỆM VỤ:
   HOẶC hỏi chung về sản phẩm/giá như: 
   "có sản phẩm nào giá mềm không", 
   "công ty có sản phẩm dành cho người thu nhập thấp không"...
-
 
 6. "combo_question"
    - Hỏi GỢI Ý COMBO/BỘ SẢN PHẨM cho một vấn đề sức khỏe.
@@ -1777,7 +1832,7 @@ def log_conversation(payload: dict):
         print("[WARN] Log error:", e)
 
 # =====================================================================
-#   CORE CHAT LOGIC
+#   CORE CHAT LOGIC (HANDLE CHAT)
 # =====================================================================
 def handle_chat(
     user_message: str,
@@ -1786,13 +1841,7 @@ def handle_chat(
     return_meta: bool = False,
     history: list | None = None,
     tenant_cfg: TenantConfig | None = None,
-    catalogs = tenant_cfg.catalogs if tenant_cfg else CatalogSettings(
-    products=PRODUCTS,
-    combos=COMBOS,
-    health_tags_config=HEALTH_TAGS_CONFIG,
-    combos_meta=COMBOS_META,
-    multi_issue_rules=MULTI_ISSUE_RULES,
-)):
+   ):
 
     text = (user_message or "").strip()
     history = history or []
@@ -2261,27 +2310,44 @@ Câu của người dùng: "{text}"
         return reply
 
     # 10.3. AUTO: ưu tiên combo, nếu không có thì show sản phẩm
+    if mode == "auto":
         combos, covered_tags = select_combos_for_tags(requested_tags, text, catalogs)
-    if combos:
-        meta["selected_combos"] = [c.get("id") for c in combos]
-        reply = llm_answer_for_combos(
-            question_for_llm, requested_tags, combos, covered_tags
-        )
-        if return_meta:
-            return reply, meta
-        return reply
 
-    products = search_products_by_tags(requested_tags, catalogs=catalogs)
-    if (not products) and ai_groups:
-         products = search_products_by_groups(ai_groups, catalogs=catalogs)
-    if products:
-        meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(
-            question_for_llm, requested_tags, products
-        )
-        if return_meta:
-            return reply, meta
-        return reply
+        if combos:
+            meta["selected_combos"] = [c.get("id") for c in combos]
+            reply = llm_answer_for_combos(
+                question_for_llm,
+                requested_tags,
+                combos,
+                covered_tags,
+                extra_instruction=expert_extra_note,
+                assistant_style_prompt=assistant_style_prompt,
+                product_disclaimer=product_disclaimer,
+                model=model_name,
+            )
+            if return_meta:
+                return reply, meta
+            return reply
+
+        # Không có combo → fallback sang sản phẩm (tags + group chuyên gia)
+        products = search_products_by_tags(requested_tags, catalogs=catalogs)
+        if (not products) and ai_groups:
+            products = search_products_by_groups(ai_groups, catalogs=catalogs)
+
+        if products:
+            meta["selected_products"] = [p.get("id") for p in products]
+            reply = llm_answer_for_products(
+                question_for_llm,
+                requested_tags,
+                products,
+                extra_instruction=expert_extra_note,
+                assistant_style_prompt=assistant_style_prompt,
+                product_disclaimer=product_disclaimer,
+                model=model_name,
+            )
+            if return_meta:
+                return reply, meta
+            return reply
 
     # 11. Không match được gì
     reply = (
@@ -2508,9 +2574,6 @@ def dfcx_webhook():
         ), 500
 
 # =====================================================================
-#   API /openai-chat – LOG DB + NHỚ CÂU CŨ + NGỮ CẢNH
-# =====================================================================
-# =====================================================================
 #   API /openai-chat – GATEWAY: SESSION + BILLING + LOG + AI
 # =====================================================================
 @app.route("/openai-chat", methods=["POST"])
@@ -2664,7 +2727,7 @@ def openai_chat():
             print(traceback.format_exc())
 
         # 4) Gọi core handle_chat (có dùng OpenAI bên trong)
-            reply_text, meta = handle_chat(
+        reply_text, meta = handle_chat(
             message_for_ai,
             mode or None,
             session_id=session_id,
@@ -2672,6 +2735,7 @@ def openai_chat():
             history=history,
             tenant_cfg=tenant_cfg,
         )
+
 
 
         # 5) Lưu bot reply
@@ -3282,5 +3346,6 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
