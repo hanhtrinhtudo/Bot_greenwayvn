@@ -3294,6 +3294,7 @@ def verify_otp():
     except Exception as e:
         print("❌ ERROR /auth/verify-otp:", e)
         return jsonify({"error": "Lỗi xác thực OTP."}), 500
+
 @app.route("/auth/login-password", methods=["POST"])
 def login_password():
     """
@@ -3329,40 +3330,43 @@ def login_password():
                 )
                 user = cur.fetchone()
 
-                if not user:
-                    return jsonify({"error": "Tài khoản không tồn tại."}), 400
+            if not user:
+                return jsonify({"error": "Tài khoản không tồn tại."}), 400
 
-                if not user.get("password_hash"):
-                    return jsonify(
-                        {
-                            "error": "Tài khoản này chưa thiết lập mật khẩu, vui lòng đăng nhập bằng OTP."
-                        }
-                    ), 400
+            if not user.get("password_hash"):
+                return jsonify(
+                    {
+                        "error": "Tài khoản này chưa thiết lập mật khẩu, vui lòng đăng nhập bằng OTP."
+                    }
+                ), 400
 
-                if not check_password(password, user["password_hash"]):
-                    return jsonify({"error": "Mật khẩu không chính xác."}), 400
+            if not check_password(password, user["password_hash"]):
+                return jsonify({"error": "Mật khẩu không chính xác."}), 400
 
-                tenant_id = user["tenant_id"]
+            tenant_id = user["tenant_id"]
 
+        finally:
+            # luôn đóng kết nối DB cho chắc
             conn.close()
 
-            # Tạo session_token đơn giản (giống verify_otp)
-            session_token = f"token-{username}-{int(time.time())}"
+        # Tạo session_token đơn giản (giống verify_otp)
+        session_token = f"token-{username}-{int(time.time())}"
 
-            return jsonify(
-                {
-                    "success": True,
-                    "session_token": session_token,
-                    "user": {
-                        "tvv_code": user["tvv_code"],
-                        "full_name": user["full_name"],
-                        "phone": user["phone"],
-                        "tenant_id": tenant_id,
-                        "company_name": user.get("company_name"),
-                        "email": user.get("email"),
-                    },
-                }
-            )
+        return jsonify(
+            {
+                "success": True,
+                "session_token": session_token,
+                "user": {
+                    "tvv_code": user["tvv_code"],
+                    "full_name": user["full_name"],
+                    "phone": user["phone"],
+                    "tenant_id": tenant_id,
+                    "company_name": user.get("company_name"),
+                    "email": user.get("email"),
+                },
+            }
+        )
+
     except Exception as e:
         print("❌ ERROR /auth/login-password:", e)
         print(traceback.format_exc())
@@ -3516,6 +3520,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
