@@ -1073,38 +1073,39 @@ def apply_multi_issue_rules(text: str, multi_issue_rules: dict | None = None):
 
     return best_rule
 
-def score_combo_for_tags(combo, requested_tags, combos_meta=None, health_cfg=None):
-    requested_tags = set(requested_tags)
-    combo_tags = set(combo.get("health_tags", []))
+def score_combo_for_tags(combo, requested_tags, combos_meta: dict | None = None):
+    """
+    Tính điểm ưu tiên cho combo theo health_tags:
+    - Trùng tag: +3 điểm / tag
+    - Combo core/support: +2 / +1
+    - Tỷ lệ phủ tags: +overlap_ratio
+    - Nếu có tag đặc thù (HIGH_PRIORITY_TAGS): cộng thêm điểm rất lớn để combo đó luôn được chọn.
+    """
+    requested_tags = set(requested_tags or [])
+    combo_tags = set(combo.get("health_tags") or [])
     intersection = requested_tags & combo_tags
-    if not intersection:
-        return 0, []
-
-    health_cfg = health_cfg or HEALTH_TAGS_CONFIG
-
     score = 0
 
-    # 1) Điểm theo trọng số tag
-    for tag in intersection:
-        cfg = health_cfg.get(tag, {})
-        w = cfg.get("weight", 1)  # mặc định 1
-        score += 3 * w
+    # 1) Điểm cơ bản theo số tag trùng
+    score += 3 * len(intersection)
 
-    # 2) Ưu tiên combo core/support
-    meta = (combos_meta or {}).get(combo.get("id", ""), {})
+    # 2) Ưu tiên combo core/support từ combos_meta
+    meta_source = combos_meta or COMBOS_META
+    meta = meta_source.get(combo.get("id", ""), {}) if meta_source else {}
     role = meta.get("role", "core")
     if role == "core":
         score += 2
     elif role == "support":
         score += 1
 
-    # 3) Nếu combo cover HẾT requested_tags → thưởng thêm
-    if requested_tags and intersection == requested_tags:
-        score += 5
+    # 3) Thêm weight theo tỷ lệ phủ
+    if combo_tags and requested_tags:
+        overlap_ratio = len(intersection) / len(requested_tags)
+        score += overlap_ratio
 
-    # 4) tỉ lệ phủ
-    overlap_ratio = len(intersection) / len(requested_tags) if requested_tags else 0
-    score += overlap_ratio
+    # 4) Ưu tiên rất mạnh nếu combo có tag bệnh đặc thù
+    if intersection & HIGH_PRIORITY_TAGS:
+        score += 20  # hệ số lớn để combo đặc thù gần như luôn đứng đầu
 
     return score, list(intersection)
 
@@ -1725,6 +1726,113 @@ Viết bằng tiếng Việt, giọng tư vấn viên thân thiện, chuyên ngh
 """
     return call_openai_responses(prompt, model=model)
 
+def basic_answer_for_combos(
+    user_question: str,
+    combos,
+    covered_tags,
+    brand: BrandSettings | None = None,
+) -> str:
+    """
+    Trả lời ở CHẾ ĐỘ CƠ BẢN (không dùng OpenAI) cho câu hỏi về COMBO.
+    Dựa 100% trên dữ liệu JSON đã chọn sẵn.
+    """
+    hotline = HOTLINE
+    if brand and getattr(brand, "hotline", None):
+        hotline = brand.hotline
+
+    if not combos:
+        return (
+            "Hiện tại em chưa tìm thấy combo phù hợp trong dữ liệu có sẵn cho trường hợp này. "
+            f"Anh/chị vui lòng liên hệ hotline {hotline} để tuyến trên hỗ trợ kỹ hơn ạ."
+        )
+
+    lines: list[str] = []
+    lines.append("Dựa trên thông tin anh/chị chia sẻ, em đề xuất một số combo sau:\n")
+
+    for idx, combo in enumerate(combos, start=1):
+        name = combo.get("name") or combo.get("title") or f"Combo {idx}"
+        short_desc = combo.get("short_desc") or combo.get("description") or ""
+        price = combo.get("price_text") or combo.get("price") or ""
+        usage = combo.get("usage_text") or combo.get("dose_text") or ""
+        url = (
+            combo.get("combo_url")
+            or combo.get("product_url")
+            or combo.get("landing_url")
+            or ""
+        )
+
+        lines.append(f"{idx}. {name}")
+        if short_desc:
+            lines.append(f"   - Mô tả ngắn: {short_desc}")
+        if price:
+            lines.append(f"   - Giá tham khảo: {price}")
+        if usage:
+            lines.append(f"   - Cách dùng gợi ý: {usage}")
+        if url:
+            lines.append(f"   - Link tham khảo: {url}")
+        lines.append("")
+
+    lines.append(
+        "Tùy mức độ và điều kiện tài chính, anh/chị có thể ưu tiên 1–2 combo phù hợp nhất với tình trạng hiện tại."
+    )
+    lines.append(
+        "Lưu ý: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
+    )
+
+    return "\n".join(lines)
+
+
+def basic_answer_for_products(
+    user_question: str,
+    products,
+    brand: BrandSettings | None = None,
+) -> str:
+    """
+    Trả lời ở CHẾ ĐỘ CƠ BẢN (không dùng OpenAI) cho câu hỏi về SẢN PHẨM.
+    Dựa 100% trên dữ liệu JSON đã chọn sẵn.
+    """
+    hotline = HOTLINE
+    if brand and getattr(brand, "hotline", None):
+        hotline = brand.hotline
+
+    if not products:
+        return (
+            "Hiện em chưa tìm thấy sản phẩm phù hợp trong dữ liệu có sẵn cho trường hợp này. "
+            f"Anh/chị có thể liên hệ hotline {hotline} để được tư vấn chi tiết hơn ạ."
+        )
+
+    lines: list[str] = []
+    lines.append("Dựa trên thông tin anh/chị chia sẻ, em đề xuất một số sản phẩm sau:\n")
+
+    for idx, p in enumerate(products, start=1):
+        name = p.get("name") or p.get("short_name") or f"Sản phẩm {idx}"
+        group = p.get("group") or ""
+        benefit = p.get("benefits_text") or p.get("description") or ""
+        price = p.get("price_text") or p.get("price") or ""
+        usage = p.get("usage_text") or p.get("dose_text") or ""
+        url = p.get("product_url") or p.get("landing_url") or ""
+
+        lines.append(f"{idx}. {name}")
+        if group:
+            lines.append(f"   - Nhóm hỗ trợ chính: {group}")
+        if benefit:
+            lines.append(f"   - Lợi ích nổi bật: {benefit}")
+        if usage:
+            lines.append(f"   - Cách dùng gợi ý: {usage}")
+        if price:
+            lines.append(f"   - Giá tham khảo: {price}")
+        if url:
+            lines.append(f"   - Link tham khảo: {url}")
+        lines.append("")
+
+    lines.append(
+        "Tùy tình trạng cụ thể và khả năng tài chính, anh/chị có thể ưu tiên 1–2 sản phẩm trọng tâm trước."
+    )
+    lines.append(
+        "Lưu ý: Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
+    )
+
+    return "\n".join(lines)
 
 # =====================================================================
 #   HANDLER CHO CÁC MODE ĐẶC BIỆT
@@ -1860,6 +1968,9 @@ def log_conversation(payload: dict):
 # =====================================================================
 #   CORE CHAT LOGIC (HANDLE CHAT)
 # =====================================================================
+# =====================================================================
+#   CORE CHAT LOGIC (HANDLE CHAT)
+# =====================================================================
 def handle_chat(
     user_message: str,
     mode: str | None = None,
@@ -1867,8 +1978,8 @@ def handle_chat(
     return_meta: bool = False,
     history: list | None = None,
     tenant_cfg: TenantConfig | None = None,
-   ):
-
+    smart_mode: bool = True,  # 👈 NEW: bật/tắt "trợ lý thông minh"
+):
     text = (user_message or "").strip()
     history = history or []
     brand = tenant_cfg.brand if tenant_cfg else None
@@ -1881,90 +1992,116 @@ def handle_chat(
         if (ai_settings and ai_settings.product_disclaimer)
         else "Sản phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh."
     )
-    model_name = ai_settings.openai_model if ai_settings and ai_settings.openai_model else "gpt-4.1-mini"
-    use_openai = ai_settings.use_openai if ai_settings is not None else True
-    use_dfcx = ai_settings.use_dfcx if ai_settings is not None else DFCX_ENABLED
+    model_name = (
+        ai_settings.openai_model
+        if ai_settings and ai_settings.openai_model
+        else "gpt-4.1-mini"
+    )
 
-    # Catalog theo tenant (đã làm ở bước trước)
-    catalogs = tenant_cfg.catalogs if tenant_cfg else CatalogSettings(
-        products=PRODUCTS,
-        combos=COMBOS,
-        health_tags_config=HEALTH_TAGS_CONFIG,
-        combos_meta=COMBOS_META,
-        multi_issue_rules=MULTI_ISSUE_RULES,
+    # Chỉ dùng OpenAI/CX khi smart_mode = True
+    use_openai = smart_mode and (
+        ai_settings.use_openai if ai_settings is not None else True
+    )
+    use_dfcx = smart_mode and (
+        ai_settings.use_dfcx if ai_settings is not None else DFCX_ENABLED
+    )
+
+    # Catalog theo tenant
+    catalogs = (
+        tenant_cfg.catalogs
+        if tenant_cfg
+        else CatalogSettings(
+            products=PRODUCTS,
+            combos=COMBOS,
+            health_tags_config=HEALTH_TAGS_CONFIG,
+            combos_meta=COMBOS_META,
+            multi_issue_rules=MULTI_ISSUE_RULES,
+        )
     )
 
     if not text:
         reply = "Em chưa nhận được câu hỏi của anh/chị."
-        if return_meta:
-            meta = {
-                "intent": "",
-                "mode_detected": "",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": "",
-                "ai_body_system": "",
-                "ai_severity": "",
-                "ai_groups": [],
-                "ai_tags": [],
-            }
-            return reply, meta
-        return reply
+        meta = {
+            "intent": "",
+            "mode_detected": "",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": "",
+            "ai_body_system": "",
+            "ai_severity": "",
+            "ai_groups": [],
+            "ai_tags": [],
+        }
+        return (reply, meta) if return_meta else reply
 
-    # ================== PHÂN LOẠI Ý ĐỊNH & PHÂN TÍCH CHUYÊN GIA ==================
     history_messages = history
+
+    # ============ INTENT + PHÂN TÍCH TRIỆU CHỨNG ============
+
+    analysis = {
+        "main_issue": "",
+        "body_system": "other",
+        "symptom_keywords": [],
+        "severity": "mild",
+        "recommended_groups": [],
+        "suggested_tags": [],
+    }
+    ai_tags: list[str] = []
+    ai_groups: list[str] = []
+
     if use_openai:
-        # 1) Ý định (intent)
+        # 1) Ý định
         intent_info = ai_classify_intent(text, history_messages)
         intent = intent_info.get("intent", "other")
         print("[INTENT]", intent, "|", intent_info.get("reason", ""))
 
-        # 2) Phân tích triệu chứng
+        # 2) Phân tích triệu chứng nếu là câu sức khỏe
         if intent in ("health_question", "combo_question", "product_question", "other"):
             try:
                 analysis = ai_analyze_symptom(text, history_messages)
             except Exception as e:
                 print("❌ ERROR ai_analyze_symptom:", e)
                 print(traceback.format_exc())
-                # giữ analysis default
     else:
-        # Nếu tắt OpenAI: không gọi model phân loại.
-        # Ta fallback ý định đơn giản bằng từ khóa cho 1 số case rõ ràng.
+        # Fallback phân loại intent bằng từ khóa (không dùng OpenAI)
         t_norm = strip_accents(text)
         if any(k in t_norm for k in ["chinh sach", "hoa hong", "tuyen dung", "leader"]):
             intent = "business_policy"
-        elif any(k in t_norm for k in ["mua", "dat hang", "thanh toan", "giao hang", "ship"]):
+        elif any(
+            k in t_norm for k in ["mua", "dat hang", "thanh toan", "giao hang", "ship"]
+        ):
             intent = "buy_payment"
-        elif any(k in t_norm for k in ["fanpage", "zalo", "website", "trang web", "kenh"]):
+        elif any(
+            k in t_norm
+            for k in ["fanpage", "zalo", "website", "trang web", "kenh"]
+        ):
             intent = "channel_info"
         elif any(k in t_norm for k in ["chao", "hello", "hi", "xin chao"]):
             intent = "greeting"
         else:
             intent = "other"
         print("[INTENT-BASIC]", intent, "| use_openai = False")
-    # ƯU TIÊN: HƯỚNG DẪN NẠP TIỀN (KHÔNG CẦN GỌI OPENAI)
+
+    # ƯU TIÊN: HƯỚNG DẪN NẠP TIỀN (KHÔNG CẦN GỌI MODEL)
     if looks_like_topup_help(text):
         reply = handle_topup_instruction(brand)
-        if return_meta:
-            meta = {
-                "intent": "topup_help",
-                "mode_detected": "topup_help",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": "",
-                "ai_body_system": "",
-                "ai_severity": "",
-                "ai_groups": [],
-                "ai_tags": [],
-            }
-            return reply, meta
-        return reply
+        meta = {
+            "intent": "topup_help",
+            "mode_detected": "topup_help",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": "",
+            "ai_body_system": "",
+            "ai_severity": "",
+            "ai_groups": [],
+            "ai_tags": [],
+        }
+        return (reply, meta) if return_meta else reply
 
-
-    # === ROUTING SANG DIALOGFLOW CX (NẾU PHÙ HỢP) ===
-    if should_route_to_cx(intent, text, ai_settings=ai_settings):
+    # ROUTE SANG DIALOGFLOW CX (CHỈ KHI smart_mode + use_dfcx)
+    if use_dfcx and should_route_to_cx(intent, text, ai_settings=ai_settings):
         cx_session_id = session_id or f"cx-{int(time.time())}"
         cx_reply, cx_debug = call_dialogflow_cx(
             cx_session_id,
@@ -1973,7 +2110,6 @@ def handle_chat(
         )
 
         if cx_reply:
-            # Nếu CX trả lời được → dùng luôn, không gọi OpenAI để tiết kiệm chi phí.
             meta = {
                 "intent": intent,
                 "mode_detected": "dialogflow_cx",
@@ -1986,65 +2122,38 @@ def handle_chat(
                 "ai_groups": [],
                 "ai_tags": [],
             }
-
             if cx_debug:
                 meta["cx_intent"] = cx_debug.get("cx_intent")
                 meta["cx_confidence"] = cx_debug.get("cx_confidence")
+            return (cx_reply, meta) if return_meta else cx_reply
+    # Nếu CX lỗi hoặc không route → tiếp tục
 
-            if return_meta:
-                return cx_reply, meta
-            return cx_reply
-    # Nếu CX lỗi hoặc không trả lời được → tiếp tục flow bình thường (OpenAI)
-
-    # === 0. Xử lý ý định "conversation_flow" (mở đầu – định hướng – chưa hỏi rõ) ===
+    # Ý định mở đầu / định hướng
     if intent == "conversation_flow":
         reply = (
             "Dạ em hiểu anh/chị đang muốn trao đổi về sản phẩm hoặc chính sách ạ. "
             "Anh/chị nói rõ giúp em nội dung cụ thể mà anh/chị quan tâm, "
             "để em tư vấn sát nhất và chính xác hơn nha. 😊"
         )
+        meta = {
+            "intent": intent,
+            "mode_detected": "conversation_flow",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": analysis.get("recommended_groups") or [],
+            "ai_tags": analysis.get("suggested_tags") or [],
+        }
+        return (reply, meta) if return_meta else reply
 
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "conversation_flow",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": "",
-                "ai_body_system": "",
-                "ai_severity": "",
-                "ai_groups": [],
-            }
-            return reply, meta
-
-        return reply
-
-    # 2) Phân tích triệu chứng ở tầng 'chuyên gia'
-    analysis = {
-        "main_issue": "",
-        "body_system": "other",
-        "symptom_keywords": [],
-        "severity": "mild",
-        "recommended_groups": [],
-        "suggested_tags": [],
-    }
-    ai_tags: list[str] = []
-    ai_groups: list[str] = []
-
-    if intent in ("health_question", "combo_question", "product_question", "other"):
-        try:
-            analysis = ai_analyze_symptom(text, history_messages)
-        except Exception as e:
-            print("❌ ERROR ai_analyze_symptom:", e)
-            print(traceback.format_exc())
-            # giữ analysis default
-
+    # Cập nhật tags/groups từ phân tích
     ai_tags = analysis.get("suggested_tags") or []
     ai_groups = analysis.get("recommended_groups") or []
     expert_extra_note = build_expert_note(analysis)
 
-    # ================== ROUTING THEO INTENT TỰ NHIÊN ==================
     # 1. Chào hỏi
     if intent == "greeting":
         reply = (
@@ -2052,24 +2161,22 @@ def handle_chat(
             "Anh/chị cứ chia sẻ giúp em vấn đề sức khỏe hoặc nhu cầu về sản phẩm, "
             "em sẽ gợi ý combo/sản phẩm phù hợp ạ."
         )
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "greeting",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return reply, meta
-        return reply
+        meta = {
+            "intent": intent,
+            "mode_detected": "greeting",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (reply, meta) if return_meta else reply
 
-    # 2. Nói chuyện đời thường / hỏi vu vơ
-    if intent == "smalltalk":
+    # 2. Smalltalk – chỉ có khi dùng OpenAI
+    if intent == "smalltalk" and use_openai:
         style_block = ""
         if assistant_style_prompt:
             style_block = (
@@ -2087,94 +2194,82 @@ sau đó khéo léo gợi ý rằng nếu họ cần tư vấn về sức khỏe
 
 Câu của người dùng: "{text}"
 """
-
         smalltalk_reply = call_openai_responses(smalltalk_prompt, model=model_name)
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "smalltalk",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return smalltalk_reply, meta
-        return smalltalk_reply
+        meta = {
+            "intent": intent,
+            "mode_detected": "smalltalk",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (smalltalk_reply, meta) if return_meta else smalltalk_reply
 
     # 3. Chính sách / kinh doanh
     if intent == "business_policy":
         reply = handle_escalate_to_hotline(brand)
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "business",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return reply, meta
-        return reply
+        meta = {
+            "intent": intent,
+            "mode_detected": "business",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (reply, meta) if return_meta else reply
 
-    # 4. Cách mua hàng / thanh toán
+    # 4. Mua hàng / thanh toán
     if intent == "buy_payment":
         reply = handle_buy_and_payment_info(brand)
+        meta = {
+            "intent": intent,
+            "mode_detected": "buy",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (reply, meta) if return_meta else reply
 
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "buy",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return reply, meta
-        return reply
-
-    # 5. Hỏi kênh liên hệ
+    # 5. Kênh liên hệ
     if intent == "channel_info":
         reply = handle_channel_navigation(brand)
+        meta = {
+            "intent": intent,
+            "mode_detected": "channel",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (reply, meta) if return_meta else reply
 
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "channel",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return reply, meta
-        return reply
-
-    # 6. Tuning mode cho các câu sức khỏe (ưu tiên intent AI)
+    # 6. Điều chỉnh mode theo intent
     if intent == "combo_question":
         mode = "combo"
     elif intent == "product_question":
         mode = "product"
-    elif intent == "health_question":
-        if not mode:
-            mode = "auto"
+    elif intent == "health_question" and not mode:
+        mode = "auto"
 
-    # 7. Follow-up kiểu "combo trên uống bao lâu" → dùng lịch sử
-    if history and looks_like_followup(text):
+    # 7. Follow-up (chỉ dùng OpenAI khi smart_mode=True)
+    if smart_mode and use_openai and history and looks_like_followup(text):
         reply = llm_answer_with_history(
             text,
             history,
@@ -2182,35 +2277,28 @@ Câu của người dùng: "{text}"
             product_disclaimer=product_disclaimer,
             model=model_name,
         )
-
-        if return_meta:
-            meta = {
-                "intent": intent,
-                "mode_detected": "followup",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": analysis.get("main_issue", ""),
-                "ai_body_system": analysis.get("body_system", ""),
-                "ai_severity": analysis.get("severity", ""),
-                "ai_groups": ai_groups,
-                "ai_tags": ai_tags,
-            }
-            return reply, meta
-        return reply
+        meta = {
+            "intent": intent,
+            "mode_detected": "followup",
+            "health_tags": [],
+            "selected_combos": [],
+            "selected_products": [],
+            "ai_main_issue": analysis.get("main_issue", ""),
+            "ai_body_system": analysis.get("body_system", ""),
+            "ai_severity": analysis.get("severity", ""),
+            "ai_groups": ai_groups,
+            "ai_tags": ai_tags,
+        }
+        return (reply, meta) if return_meta else reply
 
     # ================== MODE + TAGS + EXPERT NOTE ==================
     detected_mode = detect_mode(text) if not mode else mode.lower().strip()
     mode = detected_mode
 
-    # Tags từ từ điển + tags do AI gợi ý
-    dict_tags = extract_tags_from_text(text) or []
-    ai_tags = analysis.get("suggested_tags") or []
-    ai_groups = analysis.get("recommended_groups") or []
+    # Tags từ từ điển + tags AI
+    dict_tags = extract_tags_from_text(text, catalogs.health_tags_config) or []
+    requested_tags = list(set(dict_tags))  # có thể thêm merge với ai_tags sau
 
-    requested_tags = dict_tags
-
-    # Expert note nhúng vào prompt (không cho khách thấy nguyên văn)
     question_for_llm = text
     if expert_extra_note:
         question_for_llm = (
@@ -2235,40 +2323,35 @@ Câu của người dùng: "{text}"
     print("[DEBUG] handle_chat mode =", mode, "| text =", text)
     print("[DEBUG] requested_tags =", requested_tags, "| ai_groups =", ai_groups)
 
-    # 8.5. Câu hỏi CHUNG về sản phẩm / phân khúc giá
-    # Không có tag sức khỏe, không có nhóm chuyên gia → chỉ nên tư vấn định hướng
-    if intent in ("product_question", "other") and not requested_tags and not ai_groups:
+    # 8. Câu hỏi chung chung về sản phẩm (chỉ xử lý bằng LLM khi SMART)
+    if (
+        smart_mode
+        and use_openai
+        and intent in ("product_question", "other")
+        and not requested_tags
+        and not ai_groups
+    ):
         reply = llm_general_product_chat(
             text,
             assistant_style_prompt=assistant_style_prompt,
             model=model_name,
         )
+        return (reply, meta) if return_meta else reply
 
-        if return_meta:
-            return reply, meta
-        return reply
-
-
-    # 9. Các mode đơn giản
+    # 9. Các mode đơn giản (không cần LLM)
     if mode == "buy":
         reply = handle_buy_and_payment_info(brand)
-        if return_meta:
-            return reply, meta
-        return reply
+        return (reply, meta) if return_meta else reply
 
     if mode == "channel":
         reply = handle_channel_navigation(brand)
-        if return_meta:
-            return reply, meta
-        return reply
+        return (reply, meta) if return_meta else reply
 
     if mode == "business":
         reply = handle_escalate_to_hotline(brand)
-        if return_meta:
-            return reply, meta
-        return reply
+        return (reply, meta) if return_meta else reply
 
-    # 10. Các mode về sức khỏe: combo / product / auto
+    # 10. Mode sức khỏe: combo / product / auto
     want_combo = "combo" in strip_accents(text) or mode == "combo"
     want_product = (
         "san pham" in strip_accents(text)
@@ -2276,12 +2359,70 @@ Câu của người dùng: "{text}"
         or mode == "product"
     )
 
-    # 10.1. Ưu tiên combo nếu người dùng hỏi combo
+    # ================== NHÁNH BASIC (KHÔNG DÙNG OPENAI) ==================
+    if not smart_mode:
+        # 10.1. Ưu tiên combo
+        if want_combo and not want_product:
+            combos, covered_tags = select_combos_for_tags(
+                requested_tags, text, catalogs
+            )
+            meta["selected_combos"] = [c.get("id") for c in combos]
+            reply = basic_answer_for_combos(
+                text,
+                combos,
+                covered_tags,
+                brand=brand,
+            )
+            return (reply, meta) if return_meta else reply
+
+        # 10.2. Hỏi sản phẩm
+        if want_product and not want_combo:
+            products = search_products_by_tags(requested_tags, catalogs=catalogs)
+            if (not products) and ai_groups:
+                products = search_products_by_groups(ai_groups, catalogs=catalogs)
+            meta["selected_products"] = [p.get("id") for p in products]
+            reply = basic_answer_for_products(
+                text,
+                products,
+                brand=brand,
+            )
+            return (reply, meta) if return_meta else reply
+
+        # 10.3. AUTO: ưu tiên combo, fallback sản phẩm
+        if mode == "auto":
+            combos, covered_tags = select_combos_for_tags(
+                requested_tags, text, catalogs
+            )
+            if combos:
+                meta["selected_combos"] = [c.get("id") for c in combos]
+                reply = basic_answer_for_combos(
+                    text,
+                    combos,
+                    covered_tags,
+                    brand=brand,
+                )
+                return (reply, meta) if return_meta else reply
+
+            products = search_products_by_tags(requested_tags, catalogs=catalogs)
+            if (not products) and ai_groups:
+                products = search_products_by_groups(ai_groups, catalogs=catalogs)
+            meta["selected_products"] = [p.get("id") for p in products]
+            reply = basic_answer_for_products(
+                text,
+                products,
+                brand=brand,
+            )
+            return (reply, meta) if return_meta else reply
+
+    # ================== NHÁNH SMART (CÓ OPENAI) ==================
+    # 10.1. Ưu tiên combo
     if want_combo and not want_product:
-        combos, covered_tags = select_combos_for_tags(requested_tags, text, catalogs)
+        combos, covered_tags = select_combos_for_tags(
+            requested_tags, text, catalogs
+        )
         meta["selected_combos"] = [c.get("id") for c in combos]
 
-        if combos:
+        if combos and smart_mode and use_openai:
             reply = llm_answer_for_combos(
                 question_for_llm,
                 requested_tags,
@@ -2292,17 +2433,15 @@ Câu của người dùng: "{text}"
                 product_disclaimer=product_disclaimer,
                 model=model_name,
             )
-            if return_meta:
-                return reply, meta
-            return reply
+            return (reply, meta) if return_meta else reply
 
-        # Không có combo → fallback sang sản phẩm (tags + group chuyên gia)
+        # Không có combo hoặc không dùng LLM → fallback sản phẩm
         products = search_products_by_tags(requested_tags, catalogs=catalogs)
         if (not products) and ai_groups:
             products = search_products_by_groups(ai_groups, catalogs=catalogs)
         meta["selected_products"] = [p.get("id") for p in products]
 
-        if products:
+        if products and smart_mode and use_openai:
             reply = llm_answer_for_products(
                 question_for_llm,
                 requested_tags,
@@ -2312,34 +2451,33 @@ Câu của người dùng: "{text}"
                 product_disclaimer=product_disclaimer,
                 model=model_name,
             )
-            if return_meta:
-                return reply, meta
-            return reply
+            return (reply, meta) if return_meta else reply
 
-    # 10.2. Người dùng hỏi sản phẩm
+    # 10.2. Hỏi sản phẩm
     if want_product and not want_combo:
         products = search_products_by_tags(requested_tags, catalogs=catalogs)
         if (not products) and ai_groups:
             products = search_products_by_groups(ai_groups, catalogs=catalogs)
         meta["selected_products"] = [p.get("id") for p in products]
-        reply = llm_answer_for_products(
-            question_for_llm,
-            requested_tags,
-            products,
-            extra_instruction=expert_extra_note,
-            assistant_style_prompt=assistant_style_prompt,
-            product_disclaimer=product_disclaimer,
-            model=model_name,
-        )
-        if return_meta:
-            return reply, meta
-        return reply
 
-    # 10.3. AUTO: ưu tiên combo, nếu không có thì show sản phẩm
+        if products and smart_mode and use_openai:
+            reply = llm_answer_for_products(
+                question_for_llm,
+                requested_tags,
+                products,
+                extra_instruction=expert_extra_note,
+                assistant_style_prompt=assistant_style_prompt,
+                product_disclaimer=product_disclaimer,
+                model=model_name,
+            )
+            return (reply, meta) if return_meta else reply
+
+    # 10.3. AUTO: ưu tiên combo, fallback sản phẩm
     if mode == "auto":
-        combos, covered_tags = select_combos_for_tags(requested_tags, text, catalogs)
-
-        if combos:
+        combos, covered_tags = select_combos_for_tags(
+            requested_tags, text, catalogs
+        )
+        if combos and smart_mode and use_openai:
             meta["selected_combos"] = [c.get("id") for c in combos]
             reply = llm_answer_for_combos(
                 question_for_llm,
@@ -2351,16 +2489,13 @@ Câu của người dùng: "{text}"
                 product_disclaimer=product_disclaimer,
                 model=model_name,
             )
-            if return_meta:
-                return reply, meta
-            return reply
+            return (reply, meta) if return_meta else reply
 
-        # Không có combo → fallback sang sản phẩm (tags + group chuyên gia)
         products = search_products_by_tags(requested_tags, catalogs=catalogs)
         if (not products) and ai_groups:
             products = search_products_by_groups(ai_groups, catalogs=catalogs)
 
-        if products:
+        if products and smart_mode and use_openai:
             meta["selected_products"] = [p.get("id") for p in products]
             reply = llm_answer_for_products(
                 question_for_llm,
@@ -2371,18 +2506,14 @@ Câu của người dùng: "{text}"
                 product_disclaimer=product_disclaimer,
                 model=model_name,
             )
-            if return_meta:
-                return reply, meta
-            return reply
+            return (reply, meta) if return_meta else reply
 
     # 11. Không match được gì
     reply = (
         "Hiện em chưa tìm thấy combo hay sản phẩm nào phù hợp trong dữ liệu cho trường hợp này. "
         f"Anh/chị có thể nói rõ hơn tình trạng sức khỏe, hoặc liên hệ hotline {HOTLINE} để tuyến trên hỗ trợ kỹ hơn ạ."
     )
-    if return_meta:
-        return reply, meta
-    return reply
+    return (reply, meta) if return_meta else reply
 
 # =====================================================================
 #   DIALOGFLOW CX WEBHOOK – PHÂN LUỒNG DF CX ↔ OPENAI
@@ -2616,7 +2747,7 @@ def openai_chat():
         )
         channel = body.get("channel") or "web"
 
-        # Lấy session token từ header (ưu tiên) hoặc từ body (fallback)
+        # Lấy session token từ header (ưu tiên) hoặc body (fallback)
         session_token = (request.headers.get("X-Session-Token") or "").strip()
         if not session_token:
             session_token = (body.get("session_token") or "").strip()
@@ -2628,14 +2759,17 @@ def openai_chat():
         if user_obj:
             user_id = user_obj.get("tvv_code") or user_obj.get("phone") or ""
             tenant_id = user_obj.get("tenant_id")
-            # Load cấu hình tenant (brand, AI, catalogs...)
-                    # Load cấu hình tenant (brand + AI + catalogs)
-        tenant_cfg = load_tenant_config(tenant_id) if tenant_id else load_tenant_config(None)
 
-        # Nếu client không gửi session_id (ID phiên chat), tự sinh
+        # Load cấu hình tenant (brand + AI + catalogs)
+        tenant_cfg = (
+            load_tenant_config(tenant_id)
+            if tenant_id
+            else load_tenant_config(None)
+        )
+
+        # Nếu client không gửi session_id thì tự sinh
         session_id = body.get("session_id") or ""
         if not session_id:
-            # Gắn thêm user_id cho dễ trace
             sess_suffix = user_id if user_id else request.remote_addr
             session_id = f"web-{sess_suffix}-{int(time.time())}"
 
@@ -2654,41 +2788,40 @@ def openai_chat():
             except Exception as e:
                 print("[BILLING] Lỗi lấy số dư:", e)
                 print(traceback.format_exc())
-                # lỗi lấy số dư thì cho chạy nhưng không trừ (tránh chặn user vì bug)
+                # Lỗi lấy số dư → không chặn, nhưng cũng không trừ
 
-        # ========== CASE 1: HẾT TIỀN → CHẾ ĐỘ CƠ BẢN ==========
+        # ========== CASE 1: HẾT TIỀN → CHẾ ĐỘ BASIC (KHÔNG GỌI OPENAI) ==========
         if BILLING_ENABLED and tenant_id and not has_credit:
-            # Vẫn lưu message user
+            # 1) Lưu message user
             try:
                 save_message(session_id, "user", user_message)
             except Exception as e:
                 print("[DB ERROR] Cannot save user message:", e)
                 print(traceback.format_exc())
 
-            # Trả lời chế độ basic (không gọi OpenAI / CX)
-            reply_text = (
-                "Hiện tại tài khoản của anh/chị đã hết số dư cho chế độ trợ lý thông minh.\n\n"
-                "Bot vẫn có thể hỗ trợ anh/chị ở chế độ cơ bản miễn phí với những nội dung đã được cài đặt sẵn "
-                "(ví dụ: hướng dẫn nạp tiền, các câu hỏi thường gặp). "
-                "Để kích hoạt lại chế độ thông minh (phân tích sâu, trả lời theo ngữ cảnh), "
-                "anh/chị vui lòng nạp thêm tiền vào tài khoản.\n\n"
-                "Anh/chị có thể nhắn: \"Hướng dẫn nạp tiền\" để xem chi tiết.\n\n"
-                + NO_BALANCE_NOTICE_TEXT
+            # 2) Lấy history
+            history = []
+            try:
+                history = get_recent_history(session_id, limit=10)
+            except Exception as e:
+                print("[DB ERROR] Cannot get history:", e)
+                print(traceback.format_exc())
+
+            # 3) Gọi handle_chat ở CHẾ ĐỘ BASIC (smart_mode = False)
+            reply_text, meta = handle_chat(
+                user_message,
+                mode or None,
+                session_id=session_id,
+                return_meta=True,
+                history=history,
+                tenant_cfg=tenant_cfg,
+                smart_mode=False,  # 👈 chỉ dùng rule + JSON, không OpenAI
             )
 
-            meta = {
-                "intent": "no_credit",
-                "mode_detected": "basic_fallback",
-                "health_tags": [],
-                "selected_combos": [],
-                "selected_products": [],
-                "ai_main_issue": "",
-                "ai_body_system": "",
-                "ai_severity": "",
-                "ai_groups": [],
-                "ai_tags": [],
-            }
+            # 4) Thêm thông báo hết tiền
+            reply_text = reply_text.rstrip() + "\n\n" + NO_BALANCE_NOTICE_TEXT
 
+            # 5) Lưu bot reply
             try:
                 save_message(session_id, "assistant", reply_text)
             except Exception as e:
@@ -2697,6 +2830,7 @@ def openai_chat():
 
             latency_ms = int((time.time() - start_time) * 1000)
 
+            # 6) Log Google Sheets (không trừ tiền)
             try:
                 log_payload = {
                     "timestamp": datetime.utcnow().isoformat(),
@@ -2704,7 +2838,7 @@ def openai_chat():
                     "session_id": session_id,
                     "user_id": user_id,
                     "user_message": user_message,
-                    "message_for_ai": "",
+                    "message_for_ai": user_message,
                     "used_history_message": "",
                     "bot_reply": reply_text,
                     "intent": meta.get("intent", ""),
@@ -2728,8 +2862,8 @@ def openai_chat():
 
             return jsonify({"reply": reply_text})
 
-        # ========== CASE 2: CÒN TIỀN HOẶC BILLING TẮT → DÙNG TRỢ LÝ THÔNG MINH ==========
-        # 1) Xử lý "trả lời lại câu hỏi trên"
+        # ========== CASE 2: CÒN TIỀN HOẶC BILLING TẮT → TRỢ LÝ THÔNG MINH ==========
+        # 1) "trả lời lại câu hỏi trên"
         if looks_like_repeat_request(user_message) and session_id:
             last_q = get_last_user_message(session_id)
             if last_q:
@@ -2752,7 +2886,7 @@ def openai_chat():
             print("[DB ERROR] Cannot get history:", e)
             print(traceback.format_exc())
 
-        # 4) Gọi core handle_chat (có dùng OpenAI bên trong)
+        # 4) Gọi core handle_chat ở CHẾ ĐỘ SMART (smart_mode=True)
         reply_text, meta = handle_chat(
             message_for_ai,
             mode or None,
@@ -2760,9 +2894,8 @@ def openai_chat():
             return_meta=True,
             history=history,
             tenant_cfg=tenant_cfg,
+            smart_mode=True,  # 👈 bật full OpenAI + CX nếu có
         )
-
-
 
         # 5) Lưu bot reply
         try:
@@ -2775,7 +2908,9 @@ def openai_chat():
         extra_notice = ""
         if BILLING_ENABLED and tenant_id:
             try:
-                billing_info = charge_tenant_for_smart_request(tenant_id, messages=1)
+                billing_info = charge_tenant_for_smart_request(
+                    tenant_id, messages=1
+                )
                 old_bal = billing_info["old_balance_cents"]
                 new_bal = billing_info["new_balance_cents"]
 
@@ -2792,7 +2927,7 @@ def openai_chat():
 
         latency_ms = int((time.time() - start_time) * 1000)
 
-        # 7) Log sang Google Sheets
+        # 7) Log Google Sheets
         try:
             log_payload = {
                 "timestamp": datetime.utcnow().isoformat(),
@@ -2829,155 +2964,12 @@ def openai_chat():
         print("❌ ERROR /openai-chat:", e)
         print(traceback.format_exc())
         return jsonify(
-            {"reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau nhé."}
+            {
+                "reply": "Xin lỗi, hiện tại hệ thống đang gặp lỗi. "
+                "Anh/chị vui lòng thử lại sau nhé."
+            }
         ), 500
 
-# =====================================================================
-#   AUTH – ĐĂNG KÝ TVV TỪ TRANG INDEX
-# =====================================================================
-@app.route("/auth/register", methods=["POST"])
-def auth_register():
-    """
-    Đăng ký TVV: tạo user + (nếu cần) tạo tenant trial.
-
-    Body:
-    {
-      "full_name": "...",
-      "phone": "...",
-      "email": "...",
-      "company_name": "...",
-      "password": "..."
-    }
-    """
-    try:
-        body = request.get_json(force=True) or {}
-
-        full_name = (body.get("full_name") or "").strip()
-        phone = (body.get("phone") or "").strip()
-        email = (body.get("email") or "").strip()
-        company_name = (body.get("company_name") or "").strip()
-        password = (body.get("password") or "").strip()
-
-        if not full_name or not phone or not password:
-            return jsonify(
-                {"error": "Họ tên, số điện thoại và mật khẩu là bắt buộc."}
-            ), 400
-
-        tvv_code = phone  # dùng phone làm mã TVV mặc định
-
-        conn = get_db_conn()
-        try:
-            with conn.cursor(cursor_factory=DictCursor) as cur:
-                # 1) Lấy hoặc tạo tenant
-                tenant_name = company_name or f"Khách hàng {phone}"
-
-                cur.execute(
-                    """
-                    SELECT id
-                    FROM tenants
-                    WHERE contact_phone = %s OR name = %s
-                    LIMIT 1
-                    """,
-                    (phone, tenant_name),
-                )
-                row = cur.fetchone()
-                if row:
-                    tenant_id = row["id"]
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO tenants (name, contact_phone, status)
-                        VALUES (%s, %s, 'trial')
-                        RETURNING id
-                        """,
-                        (tenant_name, phone),
-                    )
-                    tenant_id = cur.fetchone()["id"]
-
-                # 2) Hash mật khẩu
-                password_hash = hash_password(password)
-
-                # 3) Tạo / cập nhật user
-                cur.execute(
-                    """
-                    INSERT INTO tvv_users (
-                        tvv_code,
-                        full_name,
-                        phone,
-                        email,
-                        company_name,
-                        tenant_id,
-                        is_active,
-                        password_hash
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)
-                    ON CONFLICT (phone) DO UPDATE
-                    SET
-                        full_name      = EXCLUDED.full_name,
-                        email          = EXCLUDED.email,
-                        company_name   = EXCLUDED.company_name,
-                        tenant_id      = EXCLUDED.tenant_id,
-                        is_active      = TRUE,
-                        password_hash  = EXCLUDED.password_hash,
-                        updated_at     = NOW()
-                    RETURNING tvv_code, full_name, phone, email, company_name, tenant_id;
-                    """,
-                    (
-                        tvv_code,
-                        full_name,
-                        phone,
-                        email,
-                        company_name,
-                        tenant_id,
-                        password_hash,
-                    ),
-                )
-                user = cur.fetchone()
-
-            conn.commit()
-        finally:
-            conn.close()
-
-        # (Không bắt buộc) – log sang Google Sheet
-        try:
-            log_conversation(
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "channel": "web_register",
-                    "session_id": "",
-                    "user_id": user["tvv_code"],
-                    "user_message": f"REGISTER_PASSWORD: {full_name} / {phone} / {email}",
-                    "message_for_ai": "",
-                    "used_history_message": "",
-                    "bot_reply": "",
-                    "intent": "register_tvv",
-                    "mode_detected": "",
-                    "health_tags": [],
-                    "selected_combos": [],
-                    "selected_products": [],
-                    "analysis_main_issue": "",
-                    "analysis_body_system": "",
-                    "analysis_severity": "",
-                    "analysis_groups": [],
-                    "analysis_tags": [],
-                    "latency_ms": 0,
-                }
-            )
-        except Exception as log_err:
-            print("[WARN] log register error:", log_err)
-            print(traceback.format_exc())
-
-        return jsonify(
-            {
-                "tvv_code": user["tvv_code"],
-                "message": "Đăng ký thành công. Leader sẽ kích hoạt gói sử dụng cho tài khoản này.",
-            }
-        )
-
-    except Exception as e:
-        print("❌ ERROR /auth/register:", e)
-        print(traceback.format_exc())
-        return jsonify({"error": "Lỗi hệ thống khi đăng ký TVV."}), 500
 
 # =====================================================================
 #   ADMIN – XEM DANH SÁCH TVV (HỒ SƠ TƯ VẤN VIÊN)
@@ -3631,6 +3623,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
