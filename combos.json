@@ -3,22 +3,36 @@
     {
       "id": "combo_thai_doc_giam_mo_ngua_ung_thu",
       "name": "COMBO THẢI ĐỘC - GIẢM MỠ - NGỪA UNG THƯ",
-      "aliases": [
+      "health_tags": [
+        "thai_doc",
+        "ung_thu",
+        "giam_mo"
+      ],
+      "problem_codes": [
+        "thai_doc_toan_than"
+      ],
+      "problem_synonyms": [
         "thải độc",
-        "thải độc giảm mỡ",
+        "thanh lọc cơ thể",
+        "giải độc",
+        "detox",
+        "đào thải độc tố",
+        "đào thải kim loại nặng",
+        "thải độc gan thận",
+        "thải độc đường ruột",
+        "giảm mỡ toàn thân",
+        "giảm mỡ máu",
+        "giảm mỡ nội tạng",
+        "phòng ngừa ung thư",
+        "ngừa ung thư"
+      ],
+      "aliases": [
         "combo thải độc",
         "combo thải độc giảm mỡ",
-        "combo thải độc - giảm mỡ - ngừa ung thư"
-      ],
-      "header_text": "THẢI ĐỘC - GIẢM MỠ - NGỪA UNG THƯ",
-      "duration_text": "ComBo Này Dùng Trong 01 Tháng, Để Đạt Được Kết Quả Tối Ưu Cần Dùng Từ 3 Tháng - 6 Tháng",
-      "health_tags": [
-        "gan",
-        "giam_mo",
-        "mien_dich",
-        "thai_doc",
-        "tim_mach",
-        "ung_thu"
+        "combo thải độc ngừa ung thư",
+        "thải độc giảm mỡ",
+        "thải độc cơ thể",
+        "combo thanh lọc cơ thể"
       ],
       "products": [
         {
@@ -50,19 +64,29 @@
     {
       "id": "combo_thua_can_beo_phi",
       "name": "COMBO THỪA CÂN - BÉO PHÌ",
-      "aliases": [
+      "health_tags": [
+        "giam_mo"
+      ],
+      "problem_codes": [
+        "beo_phi_thua_can"
+      ],
+      "problem_synonyms": [
         "thừa cân",
         "béo phì",
-        "combo giảm cân",
-        "combo thừa cân",
-        "combo thừa cân - béo phì"
+        "tăng cân",
+        "giảm cân",
+        "bụng to",
+        "bụng mỡ",
+        "eo to",
+        "mỡ bụng",
+        "mỡ toàn thân"
       ],
-      "header_text": "COMBO THỪA CÂN - BÉO PHÌ",
-      "duration_text": "ComBo Này Dùng Trong 01 Tháng, Để Đạt Được Kết Quả Tối Ưu Cần Dùng Từ 3 Tháng - 6 Tháng",
-      "health_tags": [
-        "giam_mo",
-        "tieu_hoa",
-        "mien_dich"
+      "aliases": [
+        "combo thừa cân béo phì",
+        "combo giảm cân",
+        "combo giảm béo",
+        "giảm mỡ bụng",
+        "giảm cân an toàn"
       ],
       "products": [
         {
@@ -94,18 +118,29 @@
     {
       "id": "combo_sang_da_dang_dep_eo_thon",
       "name": "COMBO SÁNG DA - DÁNG ĐẸP - EO THON",
-      "aliases": [
-        "sáng da",
-        "dáng đẹp",
-        "eo thon",
-        "combo sáng da dáng đẹp",
-        "combo sáng da - dáng đẹp - eo thon"
-      ],
-      "header_text": "COMBO SÁNG DA - DÁNG ĐẸP - EO THON",
-      "duration_text": "ComBo Này Dùng Trong 01 Tháng,Để Đạt Được Kết Quả Tối Ưu Cần Dùng Từ 3 Tháng - 6 Tháng",
       "health_tags": [
-        "giam_mo",
-        "mien_dich"
+        "lam_dep"
+      ],
+      "problem_codes": [
+        "lam_dep_sang_da_eo_thon"
+      ],
+      "problem_synonyms": [
+        "sáng da",
+        "trắng da",
+        "da mịn màng",
+        "mờ nám",
+        "dáng đẹp",
+        "giữ dáng",
+        "eo thon",
+        "giảm mỡ nhẹ",
+        "làm đẹp da"
+      ],
+      "aliases": [
+        "combo sáng da dáng đẹp",
+        "combo eo thon dáng đẹp",
+        "combo làm đẹp",
+        "làm đẹp da và dáng",
+        "combo đẹp da đẹp dáng"
       ],
       "products": [
         {
@@ -137,16 +172,27 @@
     {
       "id": "combo_tang_cuong_sinh_ly",
       "name": "COMBO TĂNG CƯỜNG SINH LÝ",
-      "aliases": [
-        "tăng cường sinh lý",
-        "sinh lý nam",
-        "combo sinh lý",
-        "combo tăng cường sinh lý"
-      ],
-      "header_text": "COMBO TĂNG CƯỜNG SINH LÝ",
-      "duration_text": "",
       "health_tags": [
         "sinh_ly_nam"
+      ],
+      "problem_codes": [
+        "sinh_ly_nam_suy_giam"
+      ],
+      "problem_synonyms": [
+        "yếu sinh lý",
+        "giảm sinh lý",
+        "xuất tinh sớm",
+        "rối loạn cương",
+        "rối loạn cương dương",
+        "giảm ham muốn",
+        "mãn dục nam"
+      ],
+      "aliases": [
+        "combo tăng cường sinh lý nam",
+        "combo yếu sinh lý",
+        "combo sinh lý nam",
+        "hỗ trợ sinh lý nam",
+        "tăng ham muốn nam"
       ],
       "products": [
         {
@@ -178,16 +224,30 @@
     {
       "id": "combo_cai_thien_he_ho_hap",
       "name": "COMBO CẢI THIỆN HỆ HÔ HẤP",
-      "aliases": [
-        "cải thiện hô hấp",
-        "combo hô hấp",
-        "combo cải thiện hệ hô hấp"
-      ],
-      "header_text": "COMBO CẢI THIỆN HỆ HÔ HẤP",
-      "duration_text": "",
       "health_tags": [
-        "ho_hap",
-        "mien_dich"
+        "ho_hap"
+      ],
+      "problem_codes": [
+        "viem_duong_ho_hap_man_tinh"
+      ],
+      "problem_synonyms": [
+        "ho lâu ngày",
+        "ho khan",
+        "ho có đờm",
+        "viêm họng",
+        "viêm thanh quản",
+        "viêm phế quản",
+        "hen phế quản",
+        "khó thở",
+        "viêm xoang",
+        "viêm mũi dị ứng"
+      ],
+      "aliases": [
+        "combo hô hấp người lớn",
+        "combo ho lâu ngày",
+        "combo viêm phế quản",
+        "hỗ trợ viêm họng ho đờm",
+        "combo cải thiện hô hấp"
       ],
       "products": [
         {
@@ -219,17 +279,28 @@
     {
       "id": "combo_co_xuong_khop",
       "name": "COMBO CƠ - XƯƠNG - KHƠP",
-      "aliases": [
-        "cơ xương khớp",
-        "combo cơ xương khớp",
-        "đau khớp",
-        "thoái hóa khớp"
-      ],
-      "header_text": "COMBO CƠ - XƯƠNG - KHƠP",
-      "duration_text": "ComBo Này Dùng Trong 01 Tháng,Để Đạt Được Kết Quả Tối Ưu Cần Dùng Từ 3 Tháng - 6 Tháng",
       "health_tags": [
-        "mien_dich",
         "xuong_khop"
+      ],
+      "problem_codes": [
+        "thoai_hoa_khop_dau_khop"
+      ],
+      "problem_synonyms": [
+        "đau khớp",
+        "thoái hóa khớp",
+        "khô khớp",
+        "cứng khớp",
+        "gai cột sống",
+        "đau lưng mãn tính",
+        "đau gối",
+        "thoát vị đĩa đệm"
+      ],
+      "aliases": [
+        "combo xương khớp",
+        "combo thoái hóa khớp",
+        "combo đau khớp",
+        "hỗ trợ xương khớp",
+        "combo cơ xương khớp"
       ],
       "products": [
         {
@@ -261,17 +332,31 @@
     {
       "id": "combo_cai_thien_he_tieu_hoa",
       "name": "COMBO CẢI THIỆN HỆ TIÊU HÓA",
-      "aliases": [
-        "cải thiện tiêu hóa",
-        "combo tiêu hóa",
-        "rối loạn tiêu hóa"
-      ],
-      "header_text": "COMBO CẢI THIỆN HỆ TIÊU HÓA",
-      "duration_text": "",
       "health_tags": [
-        "mien_dich",
-        "thai_doc",
         "tieu_hoa"
+      ],
+      "problem_codes": [
+        "roi_loan_tieu_hoa_da_day_ruot"
+      ],
+      "problem_synonyms": [
+        "đầy bụng",
+        "đầy hơi",
+        "khó tiêu",
+        "đau dạ dày",
+        "viêm dạ dày",
+        "loét dạ dày",
+        "trào ngược dạ dày",
+        "ợ nóng",
+        "ợ chua",
+        "hội chứng ruột kích thích",
+        "đau bụng sau ăn"
+      ],
+      "aliases": [
+        "combo tiêu hóa người lớn",
+        "combo dạ dày",
+        "combo đầy bụng khó tiêu",
+        "combo trào ngược dạ dày",
+        "hỗ trợ viêm loét dạ dày"
       ],
       "products": [
         {
@@ -303,16 +388,27 @@
     {
       "id": "combo_an_uong_kem_suy_dinh_duong",
       "name": "COMBO ĂN UỐNG KÉM - SUY DINH DƯỠNG",
-      "aliases": [
-        "ăn uống kém",
-        "suy dinh dưỡng",
-        "combo suy dinh dưỡng"
-      ],
-      "header_text": "COMBO ĂN UỐNG KÉM - SUY DINH DƯỠNG",
-      "duration_text": "",
       "health_tags": [
-        "tieu_hoa",
-        "mien_dich"
+        "tieu_hoa"
+      ],
+      "problem_codes": [
+        "an_uong_kem_suy_dinh_duong"
+      ],
+      "problem_synonyms": [
+        "ăn uống kém",
+        "lười ăn",
+        "chán ăn",
+        "kém hấp thu",
+        "suy dinh dưỡng",
+        "gầy yếu",
+        "chậm tăng cân"
+      ],
+      "aliases": [
+        "combo ăn uống kém",
+        "combo suy dinh dưỡng",
+        "tăng cường hấp thu",
+        "combo tăng cân cho người gầy",
+        "hỗ trợ ăn ngon ngủ ngon"
       ],
       "products": [
         {
@@ -344,15 +440,27 @@
     {
       "id": "combo_giam_rung_kich_thich_moc_toc",
       "name": "COMBO GIẢM RỤNG - KÍCH THÍCH MỌC TÓC",
-      "aliases": [
-        "giảm rụng tóc",
-        "kích thích mọc tóc",
-        "combo mọc tóc"
-      ],
-      "header_text": "COMBO GIẢM RỤNG - KÍCH THÍCH MỌC TÓC",
-      "duration_text": "",
       "health_tags": [
-        "mien_dich"
+        "lam_dep"
+      ],
+      "problem_codes": [
+        "rung_toc_yeu_toc"
+      ],
+      "problem_synonyms": [
+        "rụng tóc",
+        "rụng tóc nhiều",
+        "tóc gãy rụng",
+        "tóc yếu",
+        "tóc thưa",
+        "hói đầu",
+        "rụng tóc sau sinh"
+      ],
+      "aliases": [
+        "combo giảm rụng tóc",
+        "combo kích thích mọc tóc",
+        "combo mọc tóc",
+        "hỗ trợ rụng tóc",
+        "combo chăm sóc tóc"
       ],
       "products": [
         {
@@ -384,16 +492,27 @@
     {
       "id": "combo_cam_cum_so_mui",
       "name": "COMBO CẢM CÚM - SỔ MŨI",
-      "aliases": [
-        "cảm cúm",
-        "sổ mũi",
-        "combo cảm cúm"
-      ],
-      "header_text": "COMBO CẢM CÚM - SỔ MŨI",
-      "duration_text": "",
       "health_tags": [
-        "ho_hap",
-        "mien_dich"
+        "ho_hap"
+      ],
+      "problem_codes": [
+        "cam_cum_so_mui"
+      ],
+      "problem_synonyms": [
+        "cảm cúm",
+        "cảm lạnh",
+        "sổ mũi",
+        "nghẹt mũi",
+        "hắt hơi",
+        "viêm mũi dị ứng",
+        "cúm mùa"
+      ],
+      "aliases": [
+        "combo cảm cúm",
+        "combo sổ mũi nghẹt mũi",
+        "hỗ trợ cảm cúm",
+        "combo cảm lạnh",
+        "combo viêm mũi dị ứng"
       ],
       "products": [
         {
@@ -425,15 +544,25 @@
     {
       "id": "combo_ho_hap_tre_em",
       "name": "COMBO HÔ HẤP - TRẺ EM",
-      "aliases": [
-        "hô hấp trẻ em",
-        "combo hô hấp trẻ em"
-      ],
-      "header_text": "COMBO HÔ HẤP - TRẺ EM",
-      "duration_text": "",
       "health_tags": [
-        "ho_hap",
-        "mien_dich"
+        "ho_hap"
+      ],
+      "problem_codes": [
+        "ho_hap_tre_em"
+      ],
+      "problem_synonyms": [
+        "ho trẻ em",
+        "ho nhiều về đêm",
+        "khò khè",
+        "viêm tiểu phế quản",
+        "đờm ở trẻ",
+        "viêm phổi nhẹ ở trẻ"
+      ],
+      "aliases": [
+        "combo hô hấp trẻ em",
+        "combo ho trẻ em",
+        "combo viêm phế quản trẻ em",
+        "hỗ trợ ho đờm cho bé"
       ],
       "products": [
         {
@@ -465,14 +594,24 @@
     {
       "id": "combo_tieu_hoa_tre_em",
       "name": "COMBO TIÊU HÓA - TRẺ EM",
-      "aliases": [
-        "tiêu hóa trẻ em",
-        "combo tiêu hóa trẻ em"
-      ],
-      "header_text": "COMBO TIÊU HÓA - TRẺ EM",
-      "duration_text": "",
       "health_tags": [
         "tieu_hoa"
+      ],
+      "problem_codes": [
+        "tieu_hoa_tre_em"
+      ],
+      "problem_synonyms": [
+        "tiêu chảy trẻ em",
+        "táo bón trẻ em",
+        "đầy bụng ở trẻ",
+        "nôn trớ ở trẻ",
+        "loạn khuẩn đường ruột trẻ em"
+      ],
+      "aliases": [
+        "combo tiêu hóa trẻ em",
+        "combo đường ruột trẻ em",
+        "combo táo bón trẻ em",
+        "hỗ trợ tiêu chảy cho bé"
       ],
       "products": [
         {
@@ -504,16 +643,27 @@
     {
       "id": "combo_than_tiet_nieu",
       "name": "COMBO THẬN - TIẾT NIỆU",
-      "aliases": [
-        "thận tiết niệu",
-        "viêm tiết niệu",
-        "combo thận",
-        "combo thận - tiết niệu"
-      ],
-      "header_text": "COMBO THẬN - TIẾT NIỆU",
-      "duration_text": "",
       "health_tags": [
         "than"
+      ],
+      "problem_codes": [
+        "than_yeu_viem_tiet_nieu"
+      ],
+      "problem_synonyms": [
+        "thận yếu",
+        "suy thận nhẹ",
+        "viêm đường tiết niệu",
+        "tiểu buốt",
+        "tiểu dắt",
+        "tiểu rắt",
+        "tiểu không tự chủ",
+        "tiểu đêm nhiều lần"
+      ],
+      "aliases": [
+        "combo thận tiết niệu",
+        "combo thận yếu",
+        "combo viêm đường tiết niệu",
+        "hỗ trợ tiểu buốt tiểu dắt"
       ],
       "products": [
         {
@@ -545,18 +695,27 @@
     {
       "id": "combo_cai_thien_chuc_nang_gan",
       "name": "COMBO CẢI THIỆN CHỨC NĂNG GAN",
-      "aliases": [
-        "cải thiện chức năng gan",
-        "gan yếu",
-        "combo gan"
-      ],
-      "header_text": "COMBO CẢI THIỆN CHỨC NĂNG GAN",
-      "duration_text": "",
       "health_tags": [
-        "gan",
-        "mien_dich",
-        "thai_doc",
-        "tim_mach"
+        "gan"
+      ],
+      "problem_codes": [
+        "gan_nhiem_mo_men_gan_cao"
+      ],
+      "problem_synonyms": [
+        "gan nhiễm mỡ",
+        "men gan cao",
+        "viêm gan",
+        "gan yếu",
+        "chức năng gan kém",
+        "nóng gan",
+        "gan to",
+        "mỡ gan"
+      ],
+      "aliases": [
+        "combo gan nhiễm mỡ",
+        "combo men gan cao",
+        "combo giải độc gan",
+        "hỗ trợ chức năng gan"
       ],
       "products": [
         {
@@ -588,15 +747,26 @@
     {
       "id": "combo_suy_tinh_mach",
       "name": "COMBO SUY TĨNH MẠCH",
-      "aliases": [
-        "suy tĩnh mạch",
-        "suy giãn tĩnh mạch",
-        "combo suy tĩnh mạch"
-      ],
-      "header_text": "COMBO SUY TĨNH MẠCH",
-      "duration_text": "",
       "health_tags": [
         "tim_mach"
+      ],
+      "problem_codes": [
+        "suy_tinh_mach_chi_duoi"
+      ],
+      "problem_synonyms": [
+        "suy tĩnh mạch",
+        "suy giãn tĩnh mạch",
+        "tĩnh mạch chân",
+        "nổi gân xanh",
+        "nặng chân",
+        "phù chân",
+        "chuột rút ban đêm"
+      ],
+      "aliases": [
+        "combo suy tĩnh mạch",
+        "combo suy giãn tĩnh mạch",
+        "combo tĩnh mạch chân",
+        "hỗ trợ suy tĩnh mạch chi dưới"
       ],
       "products": [
         {
@@ -628,16 +798,26 @@
     {
       "id": "combo_vay_nen_viem_da_co_dia",
       "name": "COMBO VẢY NẾN-VIÊM DA CƠ ĐỊA",
-      "aliases": [
-        "vảy nến",
-        "viêm da cơ địa",
-        "combo vảy nến",
-        "combo viêm da cơ địa"
-      ],
-      "header_text": "COMBO VẢY NẾN-VIÊM DA CƠ ĐỊA",
-      "duration_text": "",
       "health_tags": [
         "mien_dich"
+      ],
+      "problem_codes": [
+        "vay_nen_viem_da_di_ung"
+      ],
+      "problem_synonyms": [
+        "vảy nến",
+        "viêm da cơ địa",
+        "chàm",
+        "eczema",
+        "á sừng",
+        "da khô bong vảy",
+        "ngứa dai dẳng"
+      ],
+      "aliases": [
+        "combo vảy nến",
+        "combo viêm da cơ địa",
+        "combo chàm á sừng",
+        "hỗ trợ bệnh vảy nến da liễu"
       ],
       "products": [
         {
@@ -669,14 +849,23 @@
     {
       "id": "combo_lupus_ban_do",
       "name": "COMBO LUPUS BAN ĐỎ",
-      "aliases": [
-        "lupus ban đỏ",
-        "combo lupus"
-      ],
-      "header_text": "COMBO LUPUS BAN ĐỎ",
-      "duration_text": "",
       "health_tags": [
         "mien_dich"
+      ],
+      "problem_codes": [
+        "lupus_ban_do_he_thong"
+      ],
+      "problem_synonyms": [
+        "lupus ban đỏ",
+        "bệnh tự miễn",
+        "lupus ban đỏ hệ thống",
+        "đau khớp do lupus",
+        "tổn thương da dạng cánh bướm"
+      ],
+      "aliases": [
+        "combo lupus ban đỏ",
+        "combo hỗ trợ bệnh tự miễn",
+        "hỗ trợ lupus ban đỏ hệ thống"
       ],
       "products": [
         {
@@ -708,18 +897,26 @@
     {
       "id": "combo_ho_tro_ung_thu",
       "name": "COMBO HỖ TRỢ UNG THƯ",
-      "aliases": [
-        "hỗ trợ ung thư",
-        "combo hỗ trợ ung thư"
-      ],
-      "header_text": "COMBO HỖ TRỢ UNG THƯ",
-      "duration_text": "",
       "health_tags": [
-        "gan",
-        "mien_dich",
-        "thai_doc",
-        "tim_mach",
         "ung_thu"
+      ],
+      "problem_codes": [
+        "ho_tro_benh_nhan_ung_thu"
+      ],
+      "problem_synonyms": [
+        "ung thư",
+        "đang hóa trị",
+        "đang xạ trị",
+        "sau hóa trị",
+        "sau xạ trị",
+        "mệt mỏi do hóa xạ trị",
+        "hỗ trợ sau phẫu thuật khối u"
+      ],
+      "aliases": [
+        "combo hỗ trợ ung thư",
+        "combo cho người ung thư",
+        "hỗ trợ bệnh nhân ung thư",
+        "tăng sức đề kháng cho người ung thư"
       ],
       "products": [
         {
@@ -751,16 +948,28 @@
     {
       "id": "combo_giam_mat_ngu_tram_cam",
       "name": "COMBO GIẢM MẤT NGỦ - TRẦM CẢM",
-      "aliases": [
-        "giảm mất ngủ",
-        "trầm cảm",
-        "combo mất ngủ",
-        "combo giảm mất ngủ - trầm cảm"
-      ],
-      "header_text": "COMBO GIẢM MẤT NGỦ - TRẦM CẢM",
-      "duration_text": "",
       "health_tags": [
         "than_kinh"
+      ],
+      "problem_codes": [
+        "mat_ngu_lo_au_tram_cam"
+      ],
+      "problem_synonyms": [
+        "mất ngủ",
+        "khó ngủ",
+        "ngủ không sâu giấc",
+        "thức giấc nhiều lần",
+        "lo âu",
+        "căng thẳng",
+        "stress",
+        "buồn chán",
+        "trầm cảm nhẹ"
+      ],
+      "aliases": [
+        "combo mất ngủ trầm cảm",
+        "combo hỗ trợ giấc ngủ",
+        "combo giảm lo âu",
+        "giảm stress cải thiện giấc ngủ"
       ],
       "products": [
         {
@@ -792,20 +1001,28 @@
     {
       "id": "combo_tieu_duong",
       "name": "COMBO TIỂU ĐƯỜNG",
-      "aliases": [
+      "health_tags": [
+        "tieu_duong"
+      ],
+      "problem_codes": [
+        "tieu_duong_type2_kem_chuyen_hoa"
+      ],
+      "problem_synonyms": [
         "tiểu đường",
         "đái tháo đường",
-        "combo tiểu đường"
+        "tiểu đường type 2",
+        "đường huyết cao",
+        "tăng đường huyết",
+        "kháng insulin",
+        "tiểu nhiều",
+        "khát nhiều",
+        "mệt mỏi do tiểu đường"
       ],
-      "header_text": "COMBO TIỂU ĐƯỜNG",
-      "duration_text": "",
-      "health_tags": [
-        "gan",
-        "mien_dich",
-        "thai_doc",
-        "tieu_duong",
-        "tieu_hoa",
-        "ung_thu"
+      "aliases": [
+        "combo tiểu đường",
+        "combo hỗ trợ tiểu đường",
+        "combo đái tháo đường",
+        "hỗ trợ ổn định đường huyết"
       ],
       "products": [
         {
@@ -837,15 +1054,27 @@
     {
       "id": "combo_buou_co",
       "name": "COMBO BƯỚU CỔ",
-      "aliases": [
-        "bướu cổ",
-        "bệnh tuyến giáp",
-        "combo bướu cổ"
-      ],
-      "header_text": "COMBO BƯỚU CỔ",
-      "duration_text": "",
       "health_tags": [
         "ung_thu"
+      ],
+      "problem_codes": [
+        "buou_co_tuyen_giap"
+      ],
+      "problem_synonyms": [
+        "bướu cổ",
+        "bướu giáp",
+        "u tuyến giáp",
+        "nhân tuyến giáp",
+        "đa nhân tuyến giáp",
+        "tuyến giáp to",
+        "cường giáp",
+        "nhược giáp"
+      ],
+      "aliases": [
+        "combo bướu cổ",
+        "combo tuyến giáp",
+        "hỗ trợ u tuyến giáp",
+        "hỗ trợ bướu cổ lành tính"
       ],
       "products": [
         {
@@ -877,16 +1106,25 @@
     {
       "id": "combo_viem_nhiem_phu_khoa_nu",
       "name": "COMBO VIÊM NHIỄM PHỤ KHOA NỮ",
-      "aliases": [
-        "viêm nhiễm phụ khoa",
-        "combo phụ khoa",
-        "combo viêm nhiễm phụ khoa"
-      ],
-      "header_text": "COMBO VIÊM NHIỄM PHỤ KHOA NỮ",
-      "duration_text": "",
       "health_tags": [
-        "mien_dich",
-        "thai_doc"
+        "mien_dich"
+      ],
+      "problem_codes": [
+        "viem_nhiem_phu_khoa_tai_phat"
+      ],
+      "problem_synonyms": [
+        "viêm phụ khoa",
+        "viêm âm đạo",
+        "nấm ngứa",
+        "huyết trắng",
+        "khí hư bất thường",
+        "viêm nhiễm phụ khoa tái phát"
+      ],
+      "aliases": [
+        "combo phụ khoa nữ",
+        "combo viêm nhiễm phụ khoa",
+        "combo huyết trắng khí hư",
+        "hỗ trợ viêm âm đạo nấm ngứa"
       ],
       "products": [
         {
@@ -918,15 +1156,25 @@
     {
       "id": "combo_giam_mo_noi_tang",
       "name": "COMBO GIẢM MỠ NỘI TẠNG",
-      "aliases": [
-        "giảm mỡ nội tạng",
-        "mỡ nội tạng",
-        "combo giảm mỡ nội tạng"
-      ],
-      "header_text": "COMBO GIẢM MỠ NỘI TẠNG",
-      "duration_text": "",
       "health_tags": [
         "giam_mo"
+      ],
+      "problem_codes": [
+        "mo_noi_tang_bung_mo"
+      ],
+      "problem_synonyms": [
+        "mỡ nội tạng",
+        "bụng mỡ",
+        "mỡ bụng",
+        "béo bụng",
+        "vòng eo lớn",
+        "mỡ quanh nội tạng"
+      ],
+      "aliases": [
+        "combo giảm mỡ nội tạng",
+        "combo bụng mỡ",
+        "giảm mỡ vòng eo",
+        "hỗ trợ giảm mỡ nội tạng"
       ],
       "products": [
         {
@@ -958,15 +1206,27 @@
     {
       "id": "combo_cho_mat",
       "name": "COMBO CHO MẮT",
-      "aliases": [
-        "mắt kém",
-        "mỏi mắt",
-        "combo cho mắt"
-      ],
-      "header_text": "COMBO CHO MẮT",
-      "duration_text": "",
       "health_tags": [
-        "mien_dich"
+        "khac"
+      ],
+      "problem_codes": [
+        "suy_giam_thi_luc_nguoi_lon"
+      ],
+      "problem_synonyms": [
+        "mỏi mắt",
+        "khô mắt",
+        "nhìn mờ",
+        "thoái hóa điểm vàng",
+        "đục thủy tinh thể giai đoạn đầu",
+        "lão hóa mắt",
+        "làm việc máy tính nhiều",
+        "ánh sáng xanh hại mắt"
+      ],
+      "aliases": [
+        "combo cho mắt",
+        "combo bổ mắt",
+        "combo mỏi mắt khô mắt",
+        "hỗ trợ suy giảm thị lực"
       ],
       "products": [
         {
@@ -998,16 +1258,27 @@
     {
       "id": "combo_huyet_ap_tim_mach",
       "name": "COMBO HUYẾT ÁP - TIM MẠCH",
-      "aliases": [
-        "huyết áp",
-        "tim mạch",
-        "cao huyết áp",
-        "combo huyết áp - tim mạch"
-      ],
-      "header_text": "COMBO HUYẾT ÁP - TIM MẠCH",
-      "duration_text": "",
       "health_tags": [
         "tim_mach"
+      ],
+      "problem_codes": [
+        "cao_huyet_ap_xo_vua_dong_mach"
+      ],
+      "problem_synonyms": [
+        "cao huyết áp",
+        "tăng huyết áp",
+        "huyết áp cao",
+        "tim mạch",
+        "xơ vữa động mạch",
+        "thiếu máu cơ tim",
+        "đau thắt ngực",
+        "rối loạn mỡ máu kèm cao huyết áp"
+      ],
+      "aliases": [
+        "combo huyết áp tim mạch",
+        "combo cao huyết áp",
+        "hỗ trợ tim mạch",
+        "hỗ trợ ổn định huyết áp"
       ],
       "products": [
         {
