@@ -2516,7 +2516,7 @@ Câu của người dùng: "{text}"
     return (reply, meta) if return_meta else reply
 
 # =====================================================================
-#   DIALOGFLOW CX WEBHOOK – PHÂN LUỒNG DF CX ↔ OPENAI
+#   DIALOGFLOW CX WEBHOOK – PHÂN LUỒNG DF CX ↔ OPENAI (+ BILLING)
 # =====================================================================
 @app.route("/dfcx-webhook", methods=["POST"])
 def dfcx_webhook():
@@ -2527,15 +2527,19 @@ def dfcx_webhook():
     - CX match intent + gán fulfillmentInfo.tag.
     - Webhook đọc tag để quyết định:
       + Một số tag flow cứng: trả lời trực tiếp (mua hàng, kênh, chính sách...).
-      + Các tag tư vấn sức khỏe/combo/sản phẩm: đẩy vào handle_chat() để OpenAI xử lý.
+      + Các tag tư vấn sức khỏe/combo/sản phẩm: đẩy vào handle_chat() để xử lý.
 
-    👉 Anh có thể đặt tag trong CX trùng với các giá trị dưới đây:
+    Tag gợi ý trong CX:
        - "BUSINESS_POLICY"   → chính sách/hoa hồng → handle_escalate_to_hotline
        - "BUY_PAYMENT"       → mua hàng/thanh toán → handle_buy_and_payment_info
        - "CHANNEL_INFO"      → hỏi kênh liên hệ    → handle_channel_navigation
        - "HEALTH_COMBO"      → tư vấn combo        → handle_chat(..., mode="combo")
        - "HEALTH_PRODUCT"    → tư vấn sản phẩm     → handle_chat(..., mode="product")
        - Các tag khác        → mặc định: handle_chat auto
+
+    Đồng bộ BILLING:
+    - Nếu BILLING_ENABLED + tenant có số dư > 0  → smart_mode = True (gọi OpenAI/CX, có trừ tiền).
+    - Nếu BILLING_ENABLED + tenant hết tiền      → smart_mode = False (BASIC: chỉ rule + JSON, không trừ tiền, có thêm notice hết tiền).
     """
     start_time = time.time()
     try:
@@ -2557,11 +2561,10 @@ def dfcx_webhook():
         tenant_cfg = load_tenant_config(tenant_id)
         brand = tenant_cfg.brand if tenant_cfg else None
 
-
-
         # Lấy tag do CX gán cho fulfillment
         fulfillment_info = body.get("fulfillmentInfo") or {}
         tag = (fulfillment_info.get("tag") or "").strip()
+        tag_upper = tag.upper()
         print(f"[DFCX] tag = {tag}, session_id = {session_id}, text = {text}")
 
         if not text:
@@ -2569,9 +2572,7 @@ def dfcx_webhook():
             return jsonify(
                 {
                     "fulfillment_response": {
-                        "messages": [
-                            {"text": {"text": [reply_text]}}
-                        ]
+                        "messages": [{"text": {"text": [reply_text]}}]
                     },
                     "sessionInfo": {
                         "session": session_id,
@@ -2591,13 +2592,30 @@ def dfcx_webhook():
             print("[DFCX] DB ERROR save user:", e)
             print(traceback.format_exc())
 
-        # Lấy lịch sử để handle follow-up cho path dùng OpenAI
+        # Lấy lịch sử để handle follow-up
         history = []
         try:
             history = get_recent_history(session_id, limit=10)
         except Exception as e:
             print("[DFCX] DB ERROR get history:", e)
             print(traceback.format_exc())
+
+        # ================== BILLING & SMART_MODE ==================
+        tenant_balance_cents = 0
+        has_credit = True
+        billing_info = None
+        smart_mode = True  # mặc định: full AI
+
+        if BILLING_ENABLED and tenant_id:
+            try:
+                tenant_balance_cents = get_tenant_balance_cents(tenant_id)
+                has_credit = tenant_balance_cents > 0
+                if not has_credit:
+                    smart_mode = False  # hết tiền → BASIC mode
+            except Exception as e:
+                print("[DFCX][BILLING] Lỗi lấy số dư:", e)
+                print(traceback.format_exc())
+                # lỗi balance → không chặn, vẫn cho smart_mode = True nhưng không trừ tiền
 
         # ========== ROUTER THEO TAG CỦA DIALOGFLOW CX ==========
         reply_text = ""
@@ -2614,9 +2632,7 @@ def dfcx_webhook():
             "ai_tags": [],
         }
 
-        tag_upper = tag.upper()
-
-        # 1. Flow cứng – không cần OpenAI
+        # Những tag này là flow cứng, KHÔNG dùng OpenAI → KHÔNG trừ tiền
         if tag_upper in ("BUSINESS_POLICY", "DF_BUSINESS_POLICY"):
             reply_text = handle_escalate_to_hotline(brand)
             meta["intent"] = "business_policy"
@@ -2632,7 +2648,7 @@ def dfcx_webhook():
             meta["intent"] = "channel_info"
             meta["mode_detected"] = "channel"
 
-        # 2. Ý định tư vấn combo / sản phẩm – cho OpenAI xử lý sâu
+        # Các tag tư vấn combo/sản phẩm: dùng handle_chat (smart_mode quyết định BASIC/SMART)
         elif tag_upper in ("HEALTH_COMBO", "DF_HEALTH_COMBO"):
             reply_text, meta = handle_chat(
                 text,
@@ -2641,6 +2657,7 @@ def dfcx_webhook():
                 return_meta=True,
                 history=history,
                 tenant_cfg=tenant_cfg,
+                smart_mode=smart_mode,
             )
 
         elif tag_upper in ("HEALTH_PRODUCT", "DF_HEALTH_PRODUCT"):
@@ -2651,9 +2668,10 @@ def dfcx_webhook():
                 return_meta=True,
                 history=history,
                 tenant_cfg=tenant_cfg,
+                smart_mode=smart_mode,
             )
 
-        # 3. Các tag khác hoặc không có tag – mặc định dùng handle_chat auto
+        # Các tag khác hoặc không có tag – mặc định dùng handle_chat auto
         else:
             reply_text, meta = handle_chat(
                 text,
@@ -2662,7 +2680,44 @@ def dfcx_webhook():
                 return_meta=True,
                 history=history,
                 tenant_cfg=tenant_cfg,
+                smart_mode=smart_mode,
             )
+
+        # ================== BILLING TRONG TRƯỜNG HỢP SMART_MODE ==================
+        billable = tag_upper not in (
+            "BUSINESS_POLICY",
+            "DF_BUSINESS_POLICY",
+            "BUY_PAYMENT",
+            "DF_BUY_PAYMENT",
+            "CHANNEL_INFO",
+            "DF_CHANNEL_INFO",
+        )
+
+        extra_notice = ""
+
+        # Nếu còn tiền + BILLING bật + smart_mode + flow có dùng AI → trừ tiền
+        if BILLING_ENABLED and tenant_id and smart_mode and billable:
+            try:
+                billing_info = charge_tenant_for_smart_request(
+                    tenant_id, messages=1
+                )
+                old_bal = billing_info["old_balance_cents"]
+                new_bal = billing_info["new_balance_cents"]
+
+                if billing_info["became_zero"]:
+                    extra_notice = "\n\n" + NO_BALANCE_NOTICE_TEXT
+                elif billing_info["is_low"]:
+                    extra_notice = "\n\n" + LOW_BALANCE_NOTICE_TEXT
+
+                if extra_notice:
+                    reply_text = reply_text.rstrip() + extra_notice
+            except Exception as e:
+                print("[DFCX][BILLING] Lỗi trừ tiền:", e)
+                print(traceback.format_exc())
+
+        # Nếu BILLING bật + tenant hết tiền ngay từ đầu → BASIC mode + thêm notice hết tiền
+        if BILLING_ENABLED and tenant_id and not has_credit:
+            reply_text = reply_text.rstrip() + "\n\n" + NO_BALANCE_NOTICE_TEXT
 
         # Lưu trả lời bot
         try:
@@ -2673,7 +2728,7 @@ def dfcx_webhook():
 
         latency_ms = int((time.time() - start_time) * 1000)
 
-        # Log sang Google Sheets để anh theo dõi cả traffic từ CX
+        # Log sang Google Sheets
         try:
             log_payload = {
                 "timestamp": datetime.utcnow().isoformat(),
@@ -2696,18 +2751,28 @@ def dfcx_webhook():
                 "analysis_tags": meta.get("ai_tags", []),
                 "latency_ms": latency_ms,
             }
+            # nếu có billing_info thì log old/new, còn không thì dùng balance hiện tại
+            if billing_info:
+                log_payload["old_balance_cents"] = billing_info[
+                    "old_balance_cents"
+                ]
+                log_payload["new_balance_cents"] = billing_info[
+                    "new_balance_cents"
+                ]
+            elif BILLING_ENABLED and tenant_id is not None:
+                log_payload["old_balance_cents"] = tenant_balance_cents
+                log_payload["new_balance_cents"] = tenant_balance_cents
+
             log_conversation(log_payload)
         except Exception as e:
             print("[DFCX] log_conversation error:", e)
             print(traceback.format_exc())
 
-        # Trả kết quả theo format của Dialogflow CX
+        # Trả kết quả về CX
         return jsonify(
             {
                 "fulfillment_response": {
-                    "messages": [
-                        {"text": {"text": [reply_text]}}
-                    ]
+                    "messages": [{"text": {"text": [reply_text]}}]
                 },
                 "sessionInfo": {
                     "session": session_id,
@@ -2719,13 +2784,14 @@ def dfcx_webhook():
     except Exception as e:
         print("❌ ERROR /dfcx-webhook:", e)
         print(traceback.format_exc())
-        reply_text = "Xin lỗi, hiện hệ thống đang gặp lỗi. Anh/chị vui lòng thử lại sau giúp em ạ."
+        reply_text = (
+            "Xin lỗi, hiện hệ thống đang gặp lỗi. "
+            "Anh/chị vui lòng thử lại sau giúp em ạ."
+        )
         return jsonify(
             {
                 "fulfillment_response": {
-                    "messages": [
-                        {"text": {"text": [reply_text]}}
-                    ]
+                    "messages": [{"text": {"text": [reply_text]}}]
                 }
             }
         ), 500
@@ -3623,6 +3689,7 @@ def home():
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
